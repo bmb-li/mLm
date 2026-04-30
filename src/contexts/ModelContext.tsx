@@ -12,12 +12,8 @@ interface ModelState {
   isLoading: boolean
   initProgress: number
   activeModelName: string | null
-  isProcessing: boolean
   loadModel: (path: string, name: string) => Promise<void>
   unloadModel: () => Promise<void>
-  completion: (params: any, onToken?: (data: any) => void) => Promise<any>
-  embedding: (input: string) => Promise<number[]>
-  stopCompletion: () => void
   clearCache: () => Promise<void>
 }
 
@@ -29,9 +25,7 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false)
   const [initProgress, setInitProgress] = useState(0)
   const [activeModelName, setActiveModelName] = useState<string | null>(null)
-  const [isProcessing, setIsProcessing] = useState(false)
   const contextRef = useRef<LlamaContext | null>(null)
-  const stopRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
     contextRef.current = context
@@ -47,8 +41,6 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true)
       setInitProgress(0)
-      setIsProcessing(false)
-      stopRef.current = null
 
       const cp: ContextParams | null = await loadContextParams()
       const llamaContext = await initLlama(
@@ -81,20 +73,13 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   const unloadModel = useCallback(async () => {
     const current = contextRef.current
     contextRef.current = null
-    stopRef.current = null
     setContext(null)
     setIsModelReady(false)
     setActiveModelName(null)
-    setIsProcessing(false)
     await AsyncStorage.removeItem(ACTIVE_MODEL_KEY)
     if (current) {
       await current.release()
     }
-  }, [])
-
-  const stopCompletion = useCallback(() => {
-    stopRef.current?.()
-    setIsProcessing(false)
   }, [])
 
   const clearCache = useCallback(async () => {
@@ -103,37 +88,10 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const completion = useCallback(async (params: any, onToken?: (data: any) => void) => {
-    const ctx = contextRef.current
-    if (!ctx) throw new Error('No model loaded')
-
-    setIsProcessing(true)
-    try {
-      const { promise, stop } = await ctx.parallel.completion(
-        params,
-        onToken ? (_reqId: number, data: any) => onToken(data) : undefined,
-      )
-      stopRef.current = stop
-      const result = await promise
-      return result
-    } finally {
-      stopRef.current = null
-      setIsProcessing(false)
-    }
-  }, [])
-
-  const embedding = useCallback(async (input: string): Promise<number[]> => {
-    const ctx = contextRef.current
-    if (!ctx) throw new Error('No model loaded')
-    const { promise } = await ctx.parallel.embedding(input)
-    const result = await promise
-    return result?.embedding || []
-  }, [])
-
   return (
     <ModelContext.Provider value={{
-      context, isModelReady, isLoading, initProgress, activeModelName, isProcessing,
-      loadModel, unloadModel, completion, embedding, stopCompletion, clearCache,
+      context, isModelReady, isLoading, initProgress, activeModelName,
+      loadModel, unloadModel, clearCache,
     }}>
       {children}
     </ModelContext.Provider>

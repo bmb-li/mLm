@@ -58,8 +58,9 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [isReadOnly, setIsReadOnly] = useState(false)
   const flatListRef = useRef<FlatList>(null)
   const insets = useSafeAreaInsets()
+  const stopRef = useRef<(() => Promise<void>) | null>(null)
 
-  const { context, isModelReady, activeModelName, completion, stopCompletion, isProcessing } = useModelContext()
+  const { context, isModelReady, activeModelName } = useModelContext()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
 
   useEffect(() => {
@@ -106,8 +107,9 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   }
 
   const handleStop = useCallback(() => {
-    stopCompletion()
-  }, [stopCompletion])
+    stopRef.current?.()
+    setIsStreaming(false)
+  }, [])
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim()
@@ -135,15 +137,18 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       ]
 
       const params = completionParams || {}
-      const completionResult = await completion(
+      const { promise, stop } = await context.parallel.completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
-        (data) => {
+        (_reqId: number, data: any) => {
           const { content = '', reasoning_content: reasoningContent } = data
           setMessages(prev => prev.map(msg =>
             msg.id === assistantId ? { ...msg, content, reasoningContent } : msg,
           ))
         },
       )
+      stopRef.current = stop
+      const completionResult = await promise
+      stopRef.current = null
 
       const finalContent = completionResult.interrupted ? completionResult.text : completionResult.content
       setMessages(prev => prev.map(msg =>

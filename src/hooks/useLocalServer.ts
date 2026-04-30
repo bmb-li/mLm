@@ -50,19 +50,26 @@ export function useLocalServer() {
     return activeModelRef.current
   }, [])
 
+  const modelContextRef = useRef(modelContext)
+  modelContextRef.current = modelContext
+
   const generateCompletion = useCallback(async (
     messages: { role: string; content: string }[],
     settings?: CompletionSettings,
     onToken?: (token: string) => boolean,
     modelId?: string,
   ): Promise<string> => {
-    if (modelId && (modelId !== modelContext.activeModelName)) {
+    const mc = modelContextRef.current
+    const ctx = mc.context
+    if (!ctx) throw new Error('No model loaded')
+
+    if (modelId && (modelId !== mc.activeModelName)) {
       const json = await AsyncStorage.getItem('@llama_custom_models')
       const customModels: CustomModel[] = json ? JSON.parse(json) : []
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Auto-loading model: ${modelId}`)
-        await modelContext.loadModel(found.localPath, modelId)
+        await mc.loadModel(found.localPath, modelId)
       } else {
         throw new Error(`Model "${modelId}" not found locally`)
       }
@@ -80,23 +87,29 @@ export function useLocalServer() {
       ...(settings?.ignore_eos != null && { ignore_eos: settings.ignore_eos }),
     }
 
-    let stopped = false
-    const result = await modelContext.completion(completionParams, (data) => {
-      const token = data.token || ''
-      if (token) {
-        if (!onToken?.(token)) {
-          stopped = true
-          modelContext.stopCompletion()
+    let stoppedRef = false
+    const { promise, stop } = await ctx.parallel.completion(
+      completionParams,
+      (_reqId: number, data: any) => {
+        const token = data.token || ''
+        if (token) {
+          if (!onToken?.(token)) {
+            stoppedRef = true
+            stop()
+          }
         }
-      }
-    })
+      },
+    )
 
+    const result = await promise
     return result.content || result.text || ''
-  }, [modelContext])
+  }, [])
 
   const generateEmbedding = useCallback(async (input: string): Promise<number[]> => {
-    return await modelContext.embedding(input)
-  }, [modelContext])
+    const ctx = modelContextRef.current.context
+    if (!ctx) throw new Error('No model loaded')
+    return (await ctx.embedding(input))?.embedding || []
+  }, [])
 
   const listModels = useCallback(async () => {
     try {
