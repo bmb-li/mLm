@@ -37,6 +37,18 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  useEffect(() => {
+    AsyncStorage.getItem(ACTIVE_MODEL_KEY).then(data => {
+      if (!data) return
+      const saved = JSON.parse(data)
+      if (saved?.path && saved?.name && !isModelReady) {
+        loadModel(saved.path, saved.name).catch(err =>
+          console.warn('Auto-load model failed:', err),
+        )
+      }
+    }).catch(() => {})
+  }, [])
+
   const loadModel = useCallback(async (path: string, name: string) => {
     try {
       setIsLoading(true)
