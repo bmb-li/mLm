@@ -19,7 +19,7 @@ android/build/
 android/app/build/
 android/app/.cxx/
 android/.gradle/
-ios/build/
+ios/
 发布文件/
 my-cache/
 .agents/
