@@ -140,17 +140,18 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const { promise, stop } = await context.parallel.completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
-          const { content = '', reasoning_content: reasoningContent } = data
-          setMessages(prev => prev.map(msg =>
-            msg.id === assistantId ? { ...msg, content, reasoningContent } : msg,
-          ))
+          if (data.accumulated_text) {
+            setMessages(prev => prev.map(msg =>
+              msg.id === assistantId ? { ...msg, content: data.accumulated_text } : msg,
+            ))
+          }
         },
       )
       stopRef.current = stop
       const completionResult = await promise
       stopRef.current = null
 
-      const finalContent = completionResult.interrupted ? completionResult.text : completionResult.content
+      const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
       setMessages(prev => prev.map(msg =>
         msg.id === assistantId ? { ...msg, content: finalContent, timings: completionResult.timings } : msg,
       ))
