@@ -87,18 +87,16 @@ export function useLocalServer() {
       ...(settings?.ignore_eos != null && { ignore_eos: settings.ignore_eos }),
     }
 
-    let stoppedRef = false
     const { promise, stop } = await ctx.parallel.completion(
       completionParams,
-      (_reqId: number, data: any) => {
+      onToken ? (_reqId: number, data: any) => {
         const token = data.token || ''
         if (token) {
-          if (!onToken?.(token)) {
-            stoppedRef = true
+          if (!onToken(token)) {
             stop()
           }
         }
-      },
+      } : undefined,
     )
 
     const result = await promise
