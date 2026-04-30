@@ -59,7 +59,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const flatListRef = useRef<FlatList>(null)
   const insets = useSafeAreaInsets()
 
-  const { context, isModelReady, activeModelName } = useModelContext()
+  const { context, isModelReady, activeModelName, completion, stopCompletion, isProcessing } = useModelContext()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
 
   useEffect(() => {
@@ -106,8 +106,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   }
 
   const handleStop = useCallback(() => {
-    if (context) context.stopCompletion()
-  }, [context])
+    stopCompletion()
+  }, [stopCompletion])
 
   const handleSend = useCallback(async () => {
     const text = inputText.trim()
@@ -135,7 +135,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       ]
 
       const params = completionParams || {}
-      const completionResult = await context.completion(
+      const completionResult = await completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (data) => {
           const { content = '', reasoning_content: reasoningContent } = data
