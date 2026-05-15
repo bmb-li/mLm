@@ -59,6 +59,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const flatListRef = useRef<FlatList>(null)
   const insets = useSafeAreaInsets()
   const stopRef = useRef<(() => Promise<void>) | null>(null)
+  const reasoningPreferenceRef = useRef(false)
+  const autoExpandedRef = useRef(false)
 
   const { context, isModelReady, activeModelName } = useModelContext()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
@@ -128,6 +130,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     setInputText('')
     Keyboard.dismiss()
     setIsStreaming(true)
+    autoExpandedRef.current = false
 
     try {
       const allMessages = [
@@ -140,10 +143,19 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const { promise, stop } = await context.parallel.completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
-          if (data.accumulated_text) {
+          const reasoningContent = data.reasoning_content || ''
+          let content = data.content || data.accumulated_text || ''
+          if (reasoningContent || /<think>/i.test(content)) {
+            content = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim()
+          }
+          if (content || reasoningContent) {
             setMessages(prev => prev.map(msg =>
-              msg.id === assistantId ? { ...msg, content: data.accumulated_text } : msg,
+              msg.id === assistantId ? { ...msg, content, reasoningContent } : msg,
             ))
+          }
+          if (reasoningContent && reasoningPreferenceRef.current && !autoExpandedRef.current) {
+            autoExpandedRef.current = true
+            setExpandedReasoning(prev => new Set(prev).add(assistantId))
           }
         },
       )
@@ -165,7 +177,13 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const toggleReasoning = (id: string) => {
     setExpandedReasoning(prev => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+        reasoningPreferenceRef.current = false
+      } else {
+        next.add(id)
+        reasoningPreferenceRef.current = true
+      }
       return next
     })
   }
@@ -255,7 +273,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <TouchableOpacity
               style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.15)', justifyContent: 'center', alignItems: 'center', marginRight: 8 }}
-              onPress={() => { handleNewChat(); setShowHistory(true) }}
+              onPress={() => { setShowHistory(true) }}
             >
               <Text style={{ color: colors.headerText, fontSize: 20 }}>☰</Text>
             </TouchableOpacity>

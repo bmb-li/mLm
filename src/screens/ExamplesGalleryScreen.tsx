@@ -1,9 +1,25 @@
-import React, { useEffect, useState } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native'
+import React, { useState } from 'react'
+import {
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  Modal, Dimensions, Alert,
+} from 'react-native'
+import ReactNativeBlobUtil from 'react-native-blob-util'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { BuildInfo, getBackendDevicesInfo } from '../../modules/llama.rn/src'
+
+const { width } = Dimensions.get('window')
+
+interface DeviceInfoItem {
+  deviceName: string
+  backend: string
+  type: string
+  maxMemorySize: number
+  metadata?: Record<string, any>
+  description?: string
+  variant?: string
+}
 
 const EXAMPLE_SCREENS = [
   { routeName: 'SimpleChat', labelKey: 'simpleChat', descKey: 'simpleChatDesc' as const },
@@ -18,17 +34,34 @@ const EXAMPLE_SCREENS = [
   { routeName: 'StressTest', labelKey: 'stressTest', descKey: 'stressTestDesc' as const },
 ]
 
+function formatBytes(bytes: number) {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`
+}
+
 export default function ExamplesGalleryScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
   const { t } = useI18n()
   const colors = theme.colors
-  const [devices, setDevices] = useState<string[]>([])
+  const [showDeviceInfo, setShowDeviceInfo] = useState(false)
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfoItem[]>([])
+  const [loadingDeviceInfo, setLoadingDeviceInfo] = useState(false)
 
-  useEffect(() => {
-    getBackendDevicesInfo().then(info => {
-      setDevices(info.map(d => `${d.backend} (${(d as any).description || (d as any).variant || ''})`))
-    }).catch(() => {})
-  }, [])
+  const loadAndShowDeviceInfo = async () => {
+    setLoadingDeviceInfo(true)
+    try {
+      const devices = await getBackendDevicesInfo()
+      setDeviceInfo(devices || [])
+      setShowDeviceInfo(true)
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to load device info')
+    } finally {
+      setLoadingDeviceInfo(false)
+    }
+  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['left', 'right']}>
@@ -48,26 +81,74 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
           </TouchableOpacity>
         ))}
 
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: 4 }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-            <Text style={{ fontSize: 16 }}>📱</Text>
+        <TouchableOpacity
+          style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          onPress={loadAndShowDeviceInfo}
+          disabled={loadingDeviceInfo}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ fontSize: 16 }}>🖥️</Text>
             <Text style={[styles.cardTitle, { color: colors.text, marginLeft: 8, marginBottom: 0 }]}>
-              {t.settings.deviceInfo}
+              {loadingDeviceInfo ? 'Loading...' : 'Device Info'}
             </Text>
           </View>
-          <Text style={[styles.cardDesc, { color: colors.textSecondary, marginBottom: 4 }]}>
+          <Text style={[styles.cardDesc, { color: colors.textSecondary, marginTop: 4 }]}>
             llama.cpp b{BuildInfo.number} ({BuildInfo.commit?.slice(0, 7)})
           </Text>
-          {devices.length > 0 && devices.map((d, i) => (
-            <Text key={i} style={[styles.cardDesc, { color: colors.textSecondary, marginBottom: 2 }]}>
-              Backend {i + 1}: {d}
-            </Text>
-          ))}
-          <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
-            CPU: arm64-v8a
-          </Text>
-        </View>
+        </TouchableOpacity>
       </ScrollView>
+
+      <Modal
+        visible={showDeviceInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeviceInfo(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>🖥️ Device Information</Text>
+              <TouchableOpacity onPress={() => setShowDeviceInfo(false)}>
+                <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '600' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator>
+              {deviceInfo.length === 0 ? (
+                <Text style={{ color: colors.textSecondary, textAlign: 'center', padding: 20 }}>
+                  No device information available
+                </Text>
+              ) : (
+                deviceInfo.map((device, index) => (
+                  <View key={index} style={[styles.deviceCard, { backgroundColor: colors.card }]}>
+                    <View style={styles.deviceCardHeader}>
+                      <Text style={[styles.deviceName, { color: colors.text }]} numberOfLines={1}>
+                        {device.deviceName}
+                      </Text>
+                      <View style={[styles.deviceBadge, { backgroundColor: colors.primary }]}>
+                        <Text style={styles.deviceBadgeText}>{device.backend}</Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
+                      Type: {device.type.toUpperCase()}
+                    </Text>
+                    <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
+                      Memory: {formatBytes(device.maxMemorySize)}
+                    </Text>
+                    {device.metadata && Object.keys(device.metadata).length > 0 && (
+                      <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
+                        Metadata: {Object.entries(device.metadata)
+                          .filter(([_, v]) => v === true)
+                          .map(([k]) => k)
+                          .join(', ')}
+                      </Text>
+                    )}
+                  </View>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -89,5 +170,61 @@ const styles = StyleSheet.create({
   cardDesc: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    borderRadius: 12,
+    padding: 20,
+    width: width * 0.9,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  deviceCard: {
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#660880',
+  },
+  deviceCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  deviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  deviceBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  deviceBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  deviceDetail: {
+    fontSize: 12,
+    marginTop: 4,
   },
 })
