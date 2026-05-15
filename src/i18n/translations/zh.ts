@@ -36,6 +36,9 @@ const zh: TranslationStrings = {
     noConversations: '暂无对话记录',
     messages: '{count} 条消息',
     readOnlyBanner: '加载模型后即可继续聊天。',
+    selectText: '选择文本',
+    copyReasoning: '复制思考内容',
+    deleteMessage: '删除消息',
   },
   models: {
     title: '模型',
@@ -186,6 +189,7 @@ const zh: TranslationStrings = {
     delete: '删除',
     confirm: '确认',
     back: '返回',
+    copy: '复制',
     copied: '已复制到剪贴板',
     share: '分享',
     ok: '确定',

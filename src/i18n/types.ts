@@ -36,6 +36,9 @@ export type TranslationStrings = {
     noConversations: string
     messages: string
     readOnlyBanner: string
+    selectText: string
+    copyReasoning: string
+    deleteMessage: string
   }
   models: {
     title: string
@@ -186,6 +189,7 @@ export type TranslationStrings = {
     delete: string
     confirm: string
     back: string
+    copy: string
     copied: string
     share: string
     ok: string

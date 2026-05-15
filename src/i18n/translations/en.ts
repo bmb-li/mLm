@@ -36,6 +36,9 @@ const en: TranslationStrings = {
     noConversations: 'No conversations yet',
     messages: '{count} messages',
     readOnlyBanner: 'Load a model to continue chatting.',
+    selectText: 'Select Text',
+    copyReasoning: 'Copy Reasoning',
+    deleteMessage: 'Delete Message',
   },
   models: {
     title: 'Models',
@@ -186,6 +189,7 @@ const en: TranslationStrings = {
     delete: 'Delete',
     confirm: 'Confirm',
     back: 'Back',
+    copy: 'Copy',
     copied: 'Copied to clipboard',
     share: 'Share',
     ok: 'OK',
