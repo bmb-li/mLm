@@ -12,11 +12,28 @@ mLm 是一款基于 [llama.rn](https://github.com/mybigday/llama.rn) 构建的 A
 - **⚙️ 参数调节** - 上下文窗口、采样参数等高级设置
 - **🌐 多语言** - 中文/英文界面
 
-## 构建
+## 依赖
 
 ```bash
+git clone https://github.com/mybigday/llama.rn.git modules/llama.rn
 npm install
+```
+
+## 构建
+
+### Debug
+
+```bash
 npm run build:android
+```
+
+### Release
+
+```bash
+npx react-native bundle --platform android --dev false --entry-file index.js \
+  --bundle-output android/app/build/generated/assets/react/release/index.android.bundle \
+  --assets-dest android/app/build/generated/res/react/release
+cd android && ./gradlew assembleRelease
 ```
 
 ## 致谢
