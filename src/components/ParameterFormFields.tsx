@@ -9,6 +9,7 @@ import {
 } from 'react-native'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 
 interface ParameterTextInputProps {
   label: string
@@ -109,6 +110,7 @@ export function StopSequenceField({
   onAddStopSequence,
 }: StopSequenceFieldProps) {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
 
   const styles = StyleSheet.create({
@@ -148,10 +150,9 @@ export function StopSequenceField({
 
   return (
     <View style={themedStyles.paramGroup}>
-      <Text style={themedStyles.paramLabel}>Stop Sequences</Text>
+      <Text style={themedStyles.paramLabel}>{t.params.stopSeq}</Text>
       <Text style={themedStyles.paramDescription}>
-        Text sequences that will stop generation when encountered. Common
-        examples: `User:`, `Llama:`, `Assistant:`
+        {t.params.stopSeqDesc}
       </Text>
 
       {stopSequences.map((stopSeq, index) => (
@@ -160,7 +161,7 @@ export function StopSequenceField({
             style={[themedStyles.textInput, styles.stopSequenceInput]}
             value={stopSeq}
             onChangeText={(text) => onUpdateStopSequence(index, text)}
-            placeholder="Enter stop sequence"
+            placeholder={t.params.stopSeqPlaceholder}
             placeholderTextColor={theme.colors.textSecondary}
             autoCorrect={false}
             autoComplete="off"
@@ -171,13 +172,13 @@ export function StopSequenceField({
             style={styles.removeButton}
             onPress={() => onRemoveStopSequence(index)}
           >
-            <Text style={styles.removeButtonText}>Remove</Text>
+            <Text style={styles.removeButtonText}>{t.params.stopSeqRemove}</Text>
           </TouchableOpacity>
         </View>
       ))}
 
       <TouchableOpacity style={styles.addButton} onPress={onAddStopSequence}>
-        <Text style={styles.addButtonText}>Add Stop Sequence</Text>
+        <Text style={styles.addButtonText}>{t.params.stopSeqAdd}</Text>
       </TouchableOpacity>
     </View>
   )

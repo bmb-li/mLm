@@ -70,10 +70,9 @@ export default function CompletionParamsModal({
     fieldName: string,
   ): string | null => {
     if (value === undefined || value === null) return null
-
     const num = typeof value === 'string' ? parseInt(value, 10) : value
     if (Number.isNaN(num) || num < min || num > max) {
-      return `${fieldName} must be between ${min} and ${max}`
+      return t.params.valBetween.replace('{field}', fieldName).replace('{min}', String(min)).replace('{max}', String(max))
     }
     return null
   }
@@ -85,30 +84,19 @@ export default function CompletionParamsModal({
     fieldName: string,
   ): string | null => {
     if (value === undefined || value === null) return null
-
     const num = typeof value === 'string' ? parseFloat(value) : value
     if (Number.isNaN(num) || num < min || num > max) {
-      return `${fieldName} must be between ${min} and ${max}`
+      return t.params.valBetween.replace('{field}', fieldName).replace('{min}', String(min)).replace('{max}', String(max))
     }
     return null
   }
 
   const validateParams = (): { isValid: boolean; errors: string[] } => {
     const validations = [
-      validateIntegerParam(
-        params.n_predict,
-        -1,
-        4096,
-        'Max Tokens (-1 for no limit)',
-      ),
-      validateIntegerParam(
-        params.thinking_budget_tokens,
-        0,
-        999999,
-        'Thinking Budget Tokens',
-      ),
-      validateNumberParam(params.temperature, 0.0, 2.0, 'Temperature'),
-      validateNumberParam(params.top_p, 0.0, 1.0, 'Top-p'),
+      validateIntegerParam(params.n_predict, -1, 4096, t.params.maxTokens),
+      validateIntegerParam(params.thinking_budget_tokens, 0, 999999, t.params.thinkingBudget),
+      validateNumberParam(params.temperature, 0.0, 2.0, t.params.temperature),
+      validateNumberParam(params.top_p, 0.0, 1.0, t.params.topP),
     ]
 
     const errors = validations.filter(
@@ -165,9 +153,9 @@ export default function CompletionParamsModal({
     const validation = validateParams()
     if (!validation.isValid) {
       Alert.alert(
-        'Validation Error',
-        `Please fix the following errors:\n\n${validation.errors.join('\n')}`,
-        [{ text: 'OK' }],
+        t.params.valError,
+        validation.errors.join('\n'),
+        [{ text: t.common.ok }],
       )
       return
     }
@@ -181,15 +169,15 @@ export default function CompletionParamsModal({
       visible={visible}
       onClose={onClose}
       title={t.params.completionTitle}
-      description="Configure how the AI generates responses."
+      description={t.params.completionDesc}
       isLoading={isLoading}
       onSave={onSaveHandler}
       onReset={handleReset}
     >
       {/* Max Tokens */}
       <ParameterTextInput
-        label="Max Tokens (n_predict)"
-        description="Maximum number of tokens to generate in response. Higher values allow longer responses."
+        label={t.params.maxTokens}
+        description={t.params.maxTokensDesc}
         value={params.n_predict?.toString()}
         onChangeText={(text) => handleTextInput(text, 'n_predict')}
         keyboardType="numeric"
@@ -198,8 +186,8 @@ export default function CompletionParamsModal({
 
       {/* Temperature */}
       <ParameterTextInput
-        label="Temperature"
-        description="Controls randomness in responses. Lower values (0.1-0.3) are more focused and deterministic, higher values (0.7-1.0) are more creative and varied."
+        label={t.params.temperature}
+        description={t.params.temperatureDesc}
         value={params.temperature?.toString()}
         onChangeText={(text) => handleTextInput(text, 'temperature')}
         keyboardType="decimal-pad"
@@ -208,8 +196,8 @@ export default function CompletionParamsModal({
 
       {/* Top-p */}
       <ParameterTextInput
-        label="Top-p (Nucleus Sampling)"
-        description="Controls diversity by considering only tokens with cumulative probability up to p. Lower values (0.1-0.5) are more focused, higher values (0.8-0.95) are more diverse."
+        label={t.params.topP}
+        description={t.params.topPDesc}
         value={params.top_p?.toString()}
         onChangeText={(text) => handleTextInput(text, 'top_p')}
         keyboardType="decimal-pad"
@@ -218,15 +206,15 @@ export default function CompletionParamsModal({
 
       {/* Enable Thinking */}
       <ParameterSwitch
-        label="Enable Thinking"
-        description="Enable thinking in the response if the model supports it."
+        label={t.params.enableThinking}
+        description={t.params.enableThinkingDesc}
         value={params.enable_thinking || false}
         onValueChange={(value) => updateParam('enable_thinking', value)}
       />
 
       <ParameterTextInput
-        label="Thinking Budget Tokens"
-        description="Maximum tokens allowed inside the model's thinking block before forcing it closed. Leave blank to disable. Only applies when chat formatting exposes thinking tags."
+        label={t.params.thinkingBudget}
+        description={t.params.thinkingBudgetDesc}
         value={params.thinking_budget_tokens?.toString()}
         onChangeText={(text) => handleTextInput(text, 'thinking_budget_tokens')}
         keyboardType="numeric"
@@ -234,8 +222,8 @@ export default function CompletionParamsModal({
       />
 
       <ParameterTextInput
-        label="Thinking Budget Message"
-        description="Optional message injected just before the thinking end tag when the budget is exhausted. Leave blank to close thinking immediately with the end tag only."
+        label={t.params.thinkingMsg}
+        description={t.params.thinkingMsgDesc}
         value={params.thinking_budget_message}
         onChangeText={(text) => updateParam('thinking_budget_message', text)}
         keyboardType="default"

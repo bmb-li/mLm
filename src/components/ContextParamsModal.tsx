@@ -220,22 +220,21 @@ export default function ContextParamsModal({
     fieldName: string,
   ): string | null => {
     if (value === undefined || value === null) return null
-
     const num = typeof value === 'string' ? parseInt(value, 10) : value
     if (Number.isNaN(num) || num < min || num > max) {
-      return `${fieldName} must be between ${min} and ${max}`
+      return t.params.valBetween.replace('{field}', fieldName).replace('{min}', String(min)).replace('{max}', String(max))
     }
     return null
   }
 
   const validateParams = (): { isValid: boolean; errors: string[] } => {
     const validations = [
-      validateIntegerParam(params.n_ctx, 128, 999999, 'Context Size'),
-      validateIntegerParam(params.n_gpu_layers, 0, 99, 'GPU Layers'),
-      validateIntegerParam(params.n_batch, 1, 99999, 'Batch Size'),
-      validateIntegerParam(params.n_ubatch, 1, 99999, 'Micro Batch Size'),
-      validateIntegerParam(params.n_threads, 1, 32, 'Threads'),
-      validateIntegerParam(params.n_cpu_moe, 0, 99, 'CPU MoE Layers'),
+      validateIntegerParam(params.n_ctx, 128, 999999, t.params.contextSize),
+      validateIntegerParam(params.n_gpu_layers, 0, 99, t.params.gpuLayers),
+      validateIntegerParam(params.n_batch, 1, 99999, t.params.batchSize),
+      validateIntegerParam(params.n_ubatch, 1, 99999, t.params.uBatch),
+      validateIntegerParam(params.n_threads, 1, 32, t.params.threads),
+      validateIntegerParam(params.n_cpu_moe, 0, 99, t.params.cpuMoe),
     ]
 
     const errors = validations.filter(
@@ -286,9 +285,9 @@ export default function ContextParamsModal({
     const validation = validateParams()
     if (!validation.isValid) {
       Alert.alert(
-        'Validation Error',
-        `Please fix the following errors:\n\n${validation.errors.join('\n')}`,
-        [{ text: 'OK' }],
+        t.params.valError,
+        validation.errors.join('\n'),
+        [{ text: t.common.ok }],
       )
       return
     }
@@ -329,17 +328,17 @@ export default function ContextParamsModal({
       visible={visible}
       onClose={onClose}
       title={t.params.contextTitle}
-      description="Configure model loading and memory settings."
+      description={t.params.contextDesc}
       isLoading={isLoading}
       onSave={onSaveHandler}
       onReset={handleReset}
       showWarning
-      warningText="Warning: Changing context parameters requires reinitializing the model, which will clear your current conversation."
+      warningText={t.params.contextWarning}
     >
       {/* Context Size */}
       <ParameterTextInput
-        label="Context Size (n_ctx)"
-        description="Maximum context length in tokens. Higher values use more memory."
+        label={t.params.contextSize}
+        description={t.params.contextSizeDesc}
         value={params.n_ctx?.toString()}
         onChangeText={(text) => {
           // Allow any text input, validation happens on save
@@ -356,11 +355,10 @@ export default function ContextParamsModal({
 
       {/* GPU Layers */}
       <ParameterTextInput
-        label="GPU Layers (n_gpu_layers)"
-        description="Number of layers to run on GPU. Use 99 for all layers, 0 for CPU only."
+        label={t.params.gpuLayers}
+        description={t.params.gpuLayersDesc}
         value={params.n_gpu_layers?.toString()}
         onChangeText={(text) => {
-          // Allow any text input, validation happens on save
           if (text === '') {
             updateParam('n_gpu_layers', undefined)
           } else {
@@ -376,11 +374,9 @@ export default function ContextParamsModal({
       />
 
       <View style={themedStyles.paramGroup}>
-        <Text style={themedStyles.paramLabel}>Devices</Text>
+        <Text style={themedStyles.paramLabel}>{t.params.devices}</Text>
         <Text style={themedStyles.paramDescription}>
-          Select the backend devices to use when initializing the context. Leave
-          it on &quot;All available devices&quot; to let llama.rn pick
-          automatically.
+          {t.params.devicesDesc}
         </Text>
 
         <View style={deviceStyles.devicesSection}>
@@ -394,10 +390,10 @@ export default function ContextParamsModal({
             <View style={deviceStyles.deviceHeader}>
               <View>
                 <Text style={deviceStyles.deviceName}>
-                  All available devices
+                  {t.params.devicesAll}
                 </Text>
                 <Text style={deviceStyles.deviceMeta}>
-                  Use default backend selection
+                  {t.params.devicesDefault}
                 </Text>
               </View>
               <View
@@ -413,7 +409,7 @@ export default function ContextParamsModal({
           {isLoadingDevices && (
             <View style={deviceStyles.loadingRow}>
               <ActivityIndicator color={theme.colors.primary} size="small" />
-              <Text style={deviceStyles.loadingText}>Loading devices...</Text>
+              <Text style={deviceStyles.loadingText}>{t.params.devicesLoading}</Text>
             </View>
           )}
 
@@ -425,7 +421,7 @@ export default function ContextParamsModal({
             availableDevices.length === 0 &&
             !devicesError && (
               <Text style={deviceStyles.emptyText}>
-                No backend devices reported. Defaults will be used.
+                {t.params.devicesNone}
               </Text>
             )}
 
@@ -474,9 +470,7 @@ export default function ContextParamsModal({
 
           {Platform.OS === 'android' && (
             <Text style={deviceStyles.helperText}>
-              Tip: On Android, selecting devices starting with &quot;HTP&quot;
-              enables Hexagon acceleration. Wildcards such as HTP* are
-              supported.
+              {t.params.devicesTip}
             </Text>
           )}
         </View>
@@ -484,24 +478,24 @@ export default function ContextParamsModal({
 
       {/* Memory Lock */}
       <ParameterSwitch
-        label="Memory Lock (use_mlock)"
-        description="Lock model in memory to prevent swapping to disk."
+        label={t.params.memoryLock}
+        description={t.params.memoryLockDesc}
         value={params.use_mlock || false}
         onValueChange={(value) => updateParam('use_mlock', value)}
       />
 
       {/* Memory Map */}
       <ParameterSwitch
-        label="Memory Map (use_mmap)"
-        description="Use memory mapping for better performance."
+        label={t.params.memoryMap}
+        description={t.params.memoryMapDesc}
         value={params.use_mmap || false}
         onValueChange={(value) => updateParam('use_mmap', value)}
       />
 
       {/* Batch Size */}
       <ParameterTextInput
-        label="Batch Size (n_batch)"
-        description="Number of tokens to process in parallel. Higher values use more memory."
+        label={t.params.batchSize}
+        description={t.params.batchSizeDesc}
         value={params.n_batch?.toString() || '512'}
         onChangeText={(text) => handleTextInput(text, 'n_batch')}
         keyboardType="numeric"
@@ -510,8 +504,8 @@ export default function ContextParamsModal({
 
       {/* Micro Batch Size */}
       <ParameterTextInput
-        label="Micro Batch Size (n_ubatch)"
-        description="Internal batch size for processing. Should be ≤ n_batch."
+        label={t.params.uBatch}
+        description={t.params.uBatchDesc}
         value={params.n_ubatch?.toString() || '512'}
         onChangeText={(text) => handleTextInput(text, 'n_ubatch')}
         keyboardType="numeric"
@@ -520,8 +514,8 @@ export default function ContextParamsModal({
 
       {/* Threads */}
       <ParameterTextInput
-        label="Threads (n_threads)"
-        description="Number of CPU threads to use. Usually set to number of CPU cores."
+        label={t.params.threads}
+        description={t.params.threadsDesc}
         value={params.n_threads?.toString()}
         onChangeText={(text) => handleTextInput(text, 'n_threads')}
         keyboardType="numeric"
@@ -530,8 +524,8 @@ export default function ContextParamsModal({
 
       {/* CPU MoE Layers */}
       <ParameterTextInput
-        label="CPU MoE Layers (n_cpu_moe)"
-        description="Number of MoE layers to keep on CPU. Use 0 to disable, higher values for more CPU processing."
+        label={t.params.cpuMoe}
+        description={t.params.cpuMoeDesc}
         value={params.n_cpu_moe?.toString() || '0'}
         onChangeText={(text) => handleTextInput(text, 'n_cpu_moe')}
         keyboardType="numeric"
@@ -540,16 +534,16 @@ export default function ContextParamsModal({
 
       {/* Context Shift */}
       <ParameterSwitch
-        label="Context Shift (ctx_shift)"
-        description="Enable automatic context shifting when context is full."
+        label={t.params.ctxShift}
+        description={t.params.ctxShiftDesc}
         value={params.ctx_shift || false}
         onValueChange={(value) => updateParam('ctx_shift', value)}
       />
 
       {/* Flash Attention Type */}
       <ParameterMenu
-        label="Flash Attention (flash_attn_type)"
-        description="Flash attention type. Only recommended on GPU devices."
+        label={t.params.flashAttn}
+        description={t.params.flashAttnDesc}
         value={params.flash_attn_type}
         options={['auto', 'on', 'off']}
         onSelect={(value) => updateParam('flash_attn_type', value)}
@@ -558,8 +552,8 @@ export default function ContextParamsModal({
 
       {/* Cache Type K */}
       <ParameterMenu
-        label="Cache Type K (cache_type_k)"
-        description="KV cache data type for the K. Need flash_attn_type set to 'on' to change this."
+        label={t.params.cacheTypeK}
+        description={t.params.cacheTypeKDesc}
         value={params.cache_type_k}
         options={CACHE_TYPE_OPTIONS}
         onSelect={(value) => updateParam('cache_type_k', value)}
@@ -568,8 +562,8 @@ export default function ContextParamsModal({
 
       {/* Cache Type V */}
       <ParameterMenu
-        label="Cache Type V (cache_type_v)"
-        description="KV cache data type for the V. Need flash_attn_type set to 'on' to change this."
+        label={t.params.cacheTypeV}
+        description={t.params.cacheTypeVDesc}
         value={params.cache_type_v}
         options={CACHE_TYPE_OPTIONS}
         onSelect={(value) => updateParam('cache_type_v', value)}
@@ -578,16 +572,16 @@ export default function ContextParamsModal({
 
       {/* KV Unified */}
       <ParameterSwitch
-        label="KV Unified (kv_unified)"
-        description="Use unified key-value store for better performance."
+        label={t.params.kvUnified}
+        description={t.params.kvUnifiedDesc}
         value={params.kv_unified || false}
         onValueChange={(value) => updateParam('kv_unified', value)}
       />
 
       {/* SWA Full */}
       <ParameterSwitch
-        label="SWA Full (swa_full)"
-        description="Use full-size SWA cache. May improve performance for multiple sequences but uses more memory."
+        label={t.params.swaFull}
+        description={t.params.swaFullDesc}
         value={params.swa_full || false}
         onValueChange={(value) => updateParam('swa_full', value)}
       />

@@ -119,6 +119,63 @@ export type TranslationStrings = {
     completionTitle: string
     contextTitle: string
     resetToDefaults: string
+    completionDesc: string
+    contextDesc: string
+    contextWarning: string
+    maxTokens: string
+    maxTokensDesc: string
+    temperature: string
+    temperatureDesc: string
+    topP: string
+    topPDesc: string
+    enableThinking: string
+    enableThinkingDesc: string
+    thinkingBudget: string
+    thinkingBudgetDesc: string
+    thinkingMsg: string
+    thinkingMsgDesc: string
+    stopSeq: string
+    stopSeqDesc: string
+    stopSeqAdd: string
+    stopSeqRemove: string
+    stopSeqPlaceholder: string
+    contextSize: string
+    contextSizeDesc: string
+    gpuLayers: string
+    gpuLayersDesc: string
+    devices: string
+    devicesDesc: string
+    devicesAll: string
+    devicesDefault: string
+    devicesLoading: string
+    devicesNone: string
+    devicesTip: string
+    memoryLock: string
+    memoryLockDesc: string
+    memoryMap: string
+    memoryMapDesc: string
+    batchSize: string
+    batchSizeDesc: string
+    uBatch: string
+    uBatchDesc: string
+    threads: string
+    threadsDesc: string
+    cpuMoe: string
+    cpuMoeDesc: string
+    ctxShift: string
+    ctxShiftDesc: string
+    flashAttn: string
+    flashAttnDesc: string
+    cacheTypeK: string
+    cacheTypeKDesc: string
+    cacheTypeV: string
+    cacheTypeVDesc: string
+    kvUnified: string
+    kvUnifiedDesc: string
+    swaFull: string
+    swaFullDesc: string
+    valError: string
+    valBetween: string
   }
   common: {
     loading: string
