@@ -12,7 +12,7 @@ interface ModelState {
   isLoading: boolean
   initProgress: number
   activeModelName: string | null
-  loadModel: (path: string, name: string) => Promise<void>
+  loadModel: (path: string, name: string) => Promise<LlamaContext>
   unloadModel: () => Promise<void>
   clearCache: () => Promise<void>
 }
@@ -37,26 +37,15 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  useEffect(() => {
-    AsyncStorage.getItem(ACTIVE_MODEL_KEY).then(data => {
-      if (!data) return
-      const saved = JSON.parse(data)
-      if (saved?.path && saved?.name && !isModelReady) {
-        loadModel(saved.path, saved.name).catch(err =>
-          console.warn('Auto-load model failed:', err),
-        )
-      }
-    }).catch(() => {})
-  }, [])
-
-  const loadModel = useCallback(async (path: string, name: string) => {
+  const loadModel = useCallback(async (path: string, name: string): Promise<LlamaContext> => {
     try {
       setIsLoading(true)
       setInitProgress(0)
 
       const cp: ContextParams | null = await loadContextParams()
+      const nSlots = cp?.n_parallel ?? 1
       const llamaContext = await initLlama(
-        { model: path, n_parallel: 8, ...(cp || {}) },
+        { model: path, n_parallel: nSlots, ...(cp || {}) },
         (progress) => setInitProgress(progress),
       )
 
@@ -64,7 +53,7 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
         await contextRef.current.release()
       }
 
-      await llamaContext.parallel.enable({ n_parallel: 4, n_batch: 512 })
+      await llamaContext.parallel.enable({ n_parallel: nSlots, n_batch: 512 })
 
       contextRef.current = llamaContext
       setContext(llamaContext)
@@ -73,6 +62,7 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
       setInitProgress(100)
 
       await AsyncStorage.setItem(ACTIVE_MODEL_KEY, JSON.stringify({ path, name }))
+      return llamaContext
     } catch (error: any) {
       console.error('Failed to load model:', error)
       throw error

@@ -233,6 +233,7 @@ export default function ContextParamsModal({
       validateIntegerParam(params.n_gpu_layers, 0, 99, t.params.gpuLayers),
       validateIntegerParam(params.n_batch, 1, 99999, t.params.batchSize),
       validateIntegerParam(params.n_ubatch, 1, 99999, t.params.uBatch),
+      validateIntegerParam(params.n_parallel, 1, 16, t.params.parallel),
       validateIntegerParam(params.n_threads, 1, 32, t.params.threads),
       validateIntegerParam(params.n_cpu_moe, 0, 99, t.params.cpuMoe),
     ]
@@ -266,6 +267,11 @@ export default function ContextParamsModal({
     if (typeof converted.n_ubatch === 'string') {
       const num = parseInt(converted.n_ubatch, 10)
       converted.n_ubatch = Number.isNaN(num) ? undefined : num
+    }
+
+    if (typeof converted.n_parallel === 'string') {
+      const num = parseInt(converted.n_parallel, 10)
+      converted.n_parallel = Number.isNaN(num) ? undefined : num
     }
 
     if (typeof converted.n_threads === 'string') {
@@ -335,6 +341,16 @@ export default function ContextParamsModal({
       showWarning
       warningText={t.params.contextWarning}
     >
+      {/* 并行序列数 */}
+      <ParameterTextInput
+        label={t.params.parallel}
+        description={t.params.parallelDesc}
+        value={params.n_parallel?.toString() || '1'}
+        onChangeText={(text) => handleTextInput(text, 'n_parallel')}
+        keyboardType="numeric"
+        placeholder="1"
+      />
+
       {/* Context Size */}
       <ParameterTextInput
         label={t.params.contextSize}

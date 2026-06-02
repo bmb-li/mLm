@@ -49,6 +49,7 @@ export const DEFAULT_CONTEXT_PARAMS: ContextParams = {
   use_mmap: true,
   n_batch: 512,
   n_ubatch: 512,
+  n_parallel: 1,
   ctx_shift: false,
   flash_attn_type: 'auto',
   cache_type_k: 'f16',

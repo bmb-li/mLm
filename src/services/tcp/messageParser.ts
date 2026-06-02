@@ -1,6 +1,12 @@
 export interface ParsedMessage {
   role: string
-  content: string
+  content: string | null
+  tool_calls?: Array<{
+    id?: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
+  tool_call_id?: string
 }
 
 export function parseMessagesFromPayload(payload: any): {
@@ -17,19 +23,36 @@ export function parseMessagesFromPayload(payload: any): {
       return { messages: [], error: 'invalid_message_role' }
     }
 
-    let content = ''
-    if (typeof msg.content === 'string') {
-      content = msg.content
-    } else if (Array.isArray(msg.content)) {
-      content = msg.content
-        .filter((part: any) => part.type === 'text')
-        .map((part: any) => part.text || '')
-        .join('')
-    } else {
-      return { messages: [], error: 'invalid_message_content' }
+    const parsed: ParsedMessage = { role: msg.role, content: null }
+
+    if (msg.content !== undefined && msg.content !== null) {
+      if (typeof msg.content === 'string') {
+        parsed.content = msg.content
+      } else if (Array.isArray(msg.content)) {
+        const text = msg.content
+          .filter((part: any) => part.type === 'text')
+          .map((part: any) => part.text || '')
+          .join('')
+        parsed.content = text || null
+      }
     }
 
-    messages.push({ role: msg.role, content })
+    if (msg.role === 'assistant' && Array.isArray(msg.tool_calls)) {
+      parsed.tool_calls = msg.tool_calls.map((tc: any) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.function?.name || '',
+          arguments: tc.function?.arguments || '',
+        },
+      }))
+    }
+
+    if (msg.role === 'tool' && typeof msg.tool_call_id === 'string') {
+      parsed.tool_call_id = msg.tool_call_id
+    }
+
+    messages.push(parsed)
   }
 
   return { messages }

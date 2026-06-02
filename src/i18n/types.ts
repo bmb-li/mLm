@@ -97,6 +97,8 @@ export type TranslationStrings = {
     serverStatus: string
     activeModel: string
     noModel: string
+    toolCalling: string
+    toolCallingDesc: string
   }
   settings: {
     title: string
@@ -177,6 +179,8 @@ export type TranslationStrings = {
     kvUnifiedDesc: string
     swaFull: string
     swaFullDesc: string
+    parallel: string
+    parallelDesc: string
     valError: string
     valBetween: string
   }

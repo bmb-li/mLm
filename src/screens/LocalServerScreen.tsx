@@ -14,7 +14,7 @@ export default function LocalServerScreen() {
   const { theme } = useTheme()
   const { t } = useI18n()
   const colors = theme.colors
-  const { state, startServer, stopServer, activeModel } = useLocalServer()
+  const { state, startServer, stopServer, activeModel, setToolCallingEnabled } = useLocalServer()
   const [keepAwake, setKeepAwake] = useState(false)
   const [autoStart, setAutoStart] = useState(false)
 
@@ -202,6 +202,28 @@ export default function LocalServerScreen() {
               value={keepAwake}
               onValueChange={setKeepAwake}
               thumbColor={keepAwake ? colors.primary : colors.textSecondary}
+              trackColor={{ false: colors.border, true: colors.primary + '40' }}
+            />
+          </View>
+          <View style={[styles.separator, { backgroundColor: colors.background }]} />
+          <View style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.card }]}>
+                <Text style={{ fontSize: 22 }}>🔧</Text>
+              </View>
+              <View style={styles.settingTextContainer}>
+                <Text style={[styles.settingText, { color: colors.text }]}>
+                  {t.server.toolCalling}
+                </Text>
+                <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                  {t.server.toolCallingDesc}
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={state.toolCallingEnabled}
+              onValueChange={setToolCallingEnabled}
+              thumbColor={state.toolCallingEnabled ? colors.primary : colors.textSecondary}
               trackColor={{ false: colors.border, true: colors.primary + '40' }}
             />
           </View>

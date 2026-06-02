@@ -2,100 +2,98 @@
 
 ## Project Overview
 
-**mLm** is a React Native app for on-device LLM inference on Android, powered by [llama.rn](https://github.com/mybigday/llama.rn). It provides a chat interface, model management, and an OpenAI-compatible local API server.
-
-## General
-
-- Pay attention to code readability.
-- Add comments appropriately, no need to explain the obvious.
-- Apply first-principles thinking when appropriate.
+**mLm** is a React Native app for on-device LLM inference on Android, powered by a vendored copy of [llama.rn](https://github.com/mybigday/llama.rn) at `modules/llama.rn/`. It provides a chat interface, model management, and an OpenAI-compatible local API server.
 
 ## Architecture
 
-1. **TypeScript App (`src/`)**
-   - `src/App.tsx` — Root component with navigation setup
-   - `src/navigation/RootNavigator.tsx` — Root stack navigator
-   - `src/navigation/MainTabNavigator.tsx` — 4 bottom tabs: Chat, Models, Server, Settings
-   - `src/screens/` — Screen components for each tab and sub-screens
-   - `src/components/` — Reusable UI components
-   - `src/services/tcp/` — TCP server with OpenAI-compatible API
-   - `src/hooks/` — Custom hooks (useLocalServer, etc.)
-   - `src/contexts/` — React contexts (theme, i18n, model)
-   - `src/i18n/` — Multi-language system (en/zh)
-   - `src/utils/` — Utility functions and constants
+- **TypeScript App (`src/`)** — React Navigation with 4 bottom tabs (Chat, Models, Server, Settings)
+- **llama.rn** — Vendored React Native binding for llama.cpp, linked via `react-native.config.js` as a local module
+- **Native** — llama.rn uses prebuilt `librnllama_*.so` + JNI bridge (`librnllama_jni_*.so`) from `modules/llama.rn/android/src/main/jniLibs/arm64-v8a/`
+- Only **arm64-v8a** ABI is built (see `android/gradle.properties`)
 
-2. **Native Layer**
-   - `llama.rn` (JSI bridge) provides the binding to llama.cpp
-   - All llama.cpp/ggml symbols are prefixed with `LM_`/`lm_`
-   - Native build is handled by llama.rn prebuilt libraries
+## Critical Constraint — NEVER Build C++ from Source
 
-## Build System
+**Do NOT run `npm run build:android` or any command that triggers CMake/C++ compilation.** The system will freeze/crash. Only compile the thin JNI bridge (8 C++ files in `cpp/jsi/`) via CMake, which is safe with `--max-workers=1`.
 
-### Android Debug 构建
+## Build Commands
 
-`bundleInDebug = true`，无需 Metro 服务器：
+### Debug APK (safe workflow, no C++ build from source)
 
 ```bash
-npm run build:android
+npx react-native bundle --platform android --dev false --entry-file index.js \
+  --bundle-output android/app/build/generated/assets/react/debug/index.android.bundle \
+  --assets-dest android/app/build/generated/res/react/debug
+cd android && ./gradlew assembleDebug --max-workers=1 -PreactNativeArchitectures=arm64-v8a
 ```
 
-1. Debug APK 包含内置 JS Bundle，可直接安装运行
-2. 安装：`adb install -r android/app/build/outputs/apk/debug/app-debug.apk`
-3. 运行：`adb shell am start -n com.mlmrn/.MainActivity`
-4. **无需 Metro 服务器**
-5. **不要使用 `React.lazy` + 动态 `import()`** — 改用直接 `import`
+Steps:
+1. Bundle JS separately (Node.js only, no C++)
+2. Build APK via Gradle with `--max-workers=1` to avoid system overload
+3. Install: `adb install -r android/app/build/outputs/apk/debug/mLm_v8a.apk`
+4. Run: `adb shell am start -n com.mlmrn/.MainActivity`
+5. **No Metro server required** (`bundleInDebug = true`)
 
-### Release 构建
+### Release APK
 
 ```bash
 npx react-native bundle --platform android --dev false --entry-file index.js \
   --bundle-output android/app/build/generated/assets/react/release/index.android.bundle \
   --assets-dest android/app/build/generated/res/react/release
-cd android && ./gradlew assembleRelease
+cd android && ./gradlew assembleRelease --max-workers=1
 ```
 
-### Metro 热重载调试
+### llvm-strip Fix
 
-1. 设置 dev server host: `adb shell settings put global dev_server_host "<dev-ip>:8081"`
-2. `npx react-native start --no-interactive` 启动 Metro
-3. `adb shell am start -n com.mlmrn/.MainActivity` 启动应用
+The NDK `llvm-strip` at `$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip` may be a broken text file. Fix:
+```bash
+cd $ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/
+rm llvm-strip && ln -sf llvm-objcopy llvm-strip
+```
+Without this fix, `.so` files are not stripped and APK balloons to ~456MB (normally ~130MB).
 
-## Important Conventions
+### Metro Hot Reload
 
-- **NEVER build from source** (npm run bootstrap, cmake, or any C++ build) - will cause system freeze/crash
-- Follow conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
+```bash
+adb shell settings put global dev_server_host "<dev-ip>:8081"
+npx react-native start
+adb shell am start -n com.mlmrn/.MainActivity
+```
 
-## Testing Strategy
+## Updating llama.rn
 
-- **Jest tests:** `src/__tests__/` — run with `npm test`
-- **Integration:** Build APK and test on device
+llama.rn is vendored at `modules/llama.rn/`. When updating prebuilt libraries:
 
-## Key Files Reference
+1. Download `llama-rn-android-jni-libs.tar.gz` from GitHub releases
+2. Extract to `modules/llama.rn/android/src/main/jniLibs/`
+3. Update `modules/llama.rn/src/version.ts` (BUILD_NUMBER, BUILD_COMMIT)
+4. **Must also sync bridge C++ code** (`cpp/` and `src/` directories) from the updated llama.rn source — otherwise the JNI wrapper calls stale APIs and the app crashes on model load
+5. Clear `.cxx` cache: `rm -rf modules/llama.rn/android/.cxx`
+6. Rebuild
 
-### App Core
-- `src/App.tsx`
-- `src/navigation/RootNavigator.tsx`
-- `src/navigation/MainTabNavigator.tsx`
+To update from a local clone at `../llama.rn/`:
+```bash
+rsync -a --delete ../llama.rn/cpp/ modules/llama.rn/cpp/
+rsync -a --delete ../llama.rn/src/ modules/llama.rn/src/
+```
 
-### Screens
-- `src/screens/MainChatScreen.tsx` — Main chat with llama.rn integration
-- `src/screens/ModelScreen.tsx` — Model management (load/unload, GGUF)
-- `src/screens/LocalServerScreen.tsx` — Server controls
-- `src/screens/SettingsScreen.tsx` — Theme, language, examples, about
-- `src/screens/ExamplesGalleryScreen.tsx` — Example demos
-- `src/screens/ServerLogsScreen.tsx` — Server log viewer
-- `src/screens/APISetupScreen.tsx` — API setup guide
+## Version Info Locations
 
-### Services
-- `src/services/tcp/TCPServer.ts` — TCP server
-- `src/services/tcp/openaiHandler.ts` — OpenAI API handler
-- `src/services/tcp/httpParser.ts` — HTTP request parser
-- `src/services/tcp/chatHandlers.ts` — Ollama-compatible handlers
+Version must be updated in **3 places**:
+- `package.json` — `"version": "0.0.2"`
+- `android/app/build.gradle` — `versionCode`, `versionName`
+- `src/screens/SettingsScreen.tsx` — hardcoded display string
 
-### Core / Reusable
-- `src/components/AppHeader.tsx` — Purple header
-- `src/components/ModelSelectorBar.tsx` — Active model bar
-- `src/contexts/I18nContext.tsx` — i18n provider
-- `src/contexts/ThemeContext.tsx` — Theme provider
-- `src/contexts/ModelContext.tsx` — Model state
-- `src/hooks/useLocalServer.ts` — Server lifecycle hook
+## TypeScript / JavaScript
+
+- **No `React.lazy` or dynamic `import()`** — use direct imports
+- Typecheck: `npx tsc --noEmit`
+- Jest tests: `npm test` (tests in `src/__tests__/`)
+- Lint: `npx eslint` (uses `eslint-config-react-native` — no local config file, relies on package config)
+- Babel alias: `llama.rn` and `@modelcontextprotocol/sdk` are aliased in `babel.config.js`
+
+## Git / Release
+
+- Commits must pass lefthook pre-commit (eslint + tsc on staged files) and commitlint
+- Use `--no-verify` only if pre-commit hook infrastructure is broken (eslint config resolution fails from subdirectories)
+- Follow conventional commits (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`)
+- Publish release: `gh release create v<tag> <apk_path> --title "mLm v<tag>" --notes "<notes>"`

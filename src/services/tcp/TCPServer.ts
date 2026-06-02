@@ -16,6 +16,7 @@ import { handleOpenAIChatCompletions, handleOpenAIModels } from './openaiHandler
 import { handleChatRequest, handleGenerateRequest } from './chatHandlers'
 import { handleShowRequest, handleEmbeddingsRequest } from './modelManagementHandlers'
 import type { CompletionSettings } from './settingsBuilder'
+import type { ParsedMessage } from './messageParser'
 
 interface ServerStatus {
   isRunning: boolean
@@ -24,13 +25,24 @@ interface ServerStatus {
   clientCount: number
 }
 
+interface CompletionResult {
+  content: string
+  text: string
+  reasoning_content: string
+  tool_calls?: Array<{
+    id?: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
+}
+
 interface ServerContext {
   generateCompletion: (
-    messages: { role: string; content: string }[],
+    messages: ParsedMessage[],
     settings?: CompletionSettings,
     onToken?: (token: string) => boolean,
     modelId?: string,
-  ) => Promise<string>
+  ) => Promise<CompletionResult>
   generateEmbedding: (input: string) => Promise<number[]>
   listModels: () => Promise<{ id: string; owned_by: string; name: string; size: number; modified: string }[]>
   getModelInfo: (name: string) => Promise<any>
@@ -50,6 +62,20 @@ export class TCPServer {
   private loggedInfo: boolean = false
   private logEntries: string[] = []
   private maxLogEntries: number = 1000
+  private debugLogs: Array<{
+    id: number
+    timestamp: string
+    method: string
+    path: string
+    requestBody: string
+    responseBody: string
+    rawResult: string | null
+    duration: number
+  }> = []
+  private debugLogId: number = 0
+  private pendingDebugReqs: Map<any, { body: string; method: string; path: string; startTime: number }> = new Map()
+  private pendingResults: Map<any, any> = new Map()
+  private maxDebugLogs: number = 100
 
   private ctx: ServerContext
 
@@ -62,6 +88,47 @@ export class TCPServer {
     if (this.logEntries.length > this.maxLogEntries) {
       this.logEntries.splice(0, this.logEntries.length - this.maxLogEntries)
     }
+  }
+
+  private recordDebugRequest(socket: any, method: string, path: string, body: string): void {
+    this.pendingDebugReqs.set(socket, { body, method, path, startTime: Date.now() })
+  }
+
+  private recordDebugResponse(socket: any, rawResponse: string): void {
+    const pending = this.pendingDebugReqs.get(socket)
+    if (!pending) return
+    this.pendingDebugReqs.delete(socket)
+
+    const rawResult = this.pendingResults.get(socket)
+    this.pendingResults.delete(socket)
+
+    this.debugLogId++
+    this.debugLogs.push({
+      id: this.debugLogId,
+      timestamp: new Date(pending.startTime).toISOString(),
+      method: pending.method,
+      path: pending.path,
+      requestBody: this.truncateBody(pending.body),
+      responseBody: this.truncateBody(rawResponse),
+      rawResult: rawResult ? this.truncateBody(JSON.stringify(rawResult)) : null,
+      duration: Date.now() - pending.startTime,
+    })
+    if (this.debugLogs.length > this.maxDebugLogs) {
+      this.debugLogs.splice(0, this.debugLogs.length - this.maxDebugLogs)
+    }
+  }
+
+  private truncateBody(body: string): string {
+    if (body.length > 8000) return body.slice(0, 8000) + '... (truncated)'
+    return body
+  }
+
+  getDebugLogs(): any[] {
+    return [...this.debugLogs]
+  }
+
+  clearDebugLogs(): void {
+    this.debugLogs = []
   }
 
   getLogs(): string[] {
@@ -194,6 +261,24 @@ export class TCPServer {
     this.clientSockets.set(peerId, Buffer.alloc(0))
     this.addLog(`Client connected: ${peerId}`)
 
+    const originalWrite = socket.write.bind(socket)
+    let responseBuffer = ''
+    socket.write = (...args: any[]) => {
+      const data = args[0]
+      if (typeof data === 'string' || data instanceof Buffer) {
+        responseBuffer += data.toString('utf8')
+      }
+      if (responseBuffer.includes('\r\n\r\n')) {
+        const bodyStart = responseBuffer.indexOf('\r\n\r\n') + 4
+        const responseBody = responseBuffer.slice(bodyStart)
+        if (responseBody.length > 0 && responseBody !== '[DONE]\n\n') {
+          this.recordDebugResponse(socket, responseBody)
+        }
+        responseBuffer = ''
+      }
+      return originalWrite(...args)
+    }
+
     socket.on('data', (data: Buffer) => {
       this.handleData(peerId, socket, data)
     })
@@ -225,6 +310,9 @@ export class TCPServer {
 
         if (parsed.request) {
           this.clientSockets.set(peerId, parsed.remainingBuffer)
+          if (parsed.request.method === 'POST') {
+            this.recordDebugRequest(socket, parsed.request.method, parsed.request.path, parsed.request.body)
+          }
           this.handleHTTPRequestSync(socket, parsed.request.method, parsed.request.path, parsed.request.body)
         }
 
@@ -247,6 +335,8 @@ export class TCPServer {
     if (method === 'GET' && path === '/api/status') { this.handleServerStatus(socket); return }
     if (method === 'GET' && path === '/api/tags') { this.handleApiTags(socket); return }
     if (method === 'GET' && path === '/api/ps') { this.handleApiPs(socket); return }
+    if (method === 'GET' && path === '/api/debug') { this.handleDebugLogs(socket); return }
+    if (method === 'POST' && path === '/api/debug/clear') { this.clearDebugLogs(); sendJSONResponse(socket, 200, { ok: true }); return }
 
     // Check extended API routing
     const segments = path.split('/').filter(s => s.length > 0)
@@ -323,6 +413,10 @@ export class TCPServer {
     }
   }
 
+  private handleDebugLogs(socket: any): void {
+    sendJSONResponse(socket, 200, { logs: this.getDebugLogs() })
+  }
+
   private async handleHTTPRequest(socket: any, method: string, path: string, body: string): Promise<void> {
     this.addLog(`${method} ${path}`)
 
@@ -335,7 +429,9 @@ export class TCPServer {
       await handleOpenAIChatCompletions(
         body, socket, method, path,
         async (messages, settings, onToken) => {
-          return await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          const result = await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          this.pendingResults.set(socket, result)
+          return result
         },
         (s, st, msg) => sendJSONResponse(s, st, { error: { message: msg, type: 'server_error' } }),
       )
@@ -346,7 +442,8 @@ export class TCPServer {
       await handleChatRequest(
         body, socket, method, path,
         async (messages, settings, onToken) => {
-          return await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          const result = await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          return result.content
         },
         (s, st, msg) => sendJSONResponse(s, st, { error: msg }),
       )
@@ -357,7 +454,8 @@ export class TCPServer {
       await handleGenerateRequest(
         body, socket, method, path,
         async (messages, settings, onToken) => {
-          return await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          const result = await this.ctx.generateCompletion(messages, settings, onToken, modelId)
+          return result.content
         },
         (s, st, msg) => sendJSONResponse(s, st, { error: msg }),
       )

@@ -97,6 +97,8 @@ const en: TranslationStrings = {
     serverStatus: 'Server Status',
     activeModel: 'Active Model',
     noModel: 'No model loaded',
+    toolCalling: 'Tool Calling',
+    toolCallingDesc: 'Enable tool/function calling in API responses. When disabled, tool parameters are ignored.',
   },
   settings: {
     title: 'Settings',
@@ -177,6 +179,8 @@ const en: TranslationStrings = {
     kvUnifiedDesc: 'Use unified key-value store for better performance.',
     swaFull: 'SWA Full (swa_full)',
     swaFullDesc: 'Use full-size SWA cache. May improve performance for multiple sequences but uses more memory.',
+    parallel: 'Parallel Sequences (n_parallel)',
+    parallelDesc: 'Number of parallel processing slots. Each slot gets 1/n_parallel of context. Set to 1 for full context per request.',
     valError: 'Validation Error',
     valBetween: '{field} must be between {min} and {max}',
   },

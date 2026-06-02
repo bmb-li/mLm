@@ -97,6 +97,8 @@ const zh: TranslationStrings = {
     serverStatus: '服务器状态',
     activeModel: '活动模型',
     noModel: '未加载模型',
+    toolCalling: '工具调用',
+    toolCallingDesc: '在 API 响应中启用工具/函数调用。关闭时将忽略工具参数。',
   },
   settings: {
     title: '设置',
@@ -177,6 +179,8 @@ const zh: TranslationStrings = {
     kvUnifiedDesc: '使用统一的键值存储以获得更好的性能。',
     swaFull: 'SWA 完整缓存 (swa_full)',
     swaFullDesc: '使用完整大小的 SWA 缓存。多序列场景下可提高性能，但会占用更多内存。',
+    parallel: '并行序列数 (n_parallel)',
+    parallelDesc: '并行处理槽位数量。每个 slot 获取 1/n_parallel 的上下文。设为 1 可获得全量上下文。',
     valError: '校验错误',
     valBetween: '{field} 必须在 {min} 和 {max} 之间',
   },

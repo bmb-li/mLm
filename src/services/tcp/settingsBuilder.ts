@@ -10,6 +10,10 @@ export interface CompletionSettings {
   stop?: string[]
   cache_prompt?: boolean
   ignore_eos?: boolean
+  tools?: object
+  tool_choice?: string
+  parallel_tool_calls?: object
+  response_format?: { type: 'text' | 'json_object' | 'json_schema'; json_schema?: object; schema?: object }
 }
 
 export function buildCustomSettings(payload: any): CompletionSettings | undefined {
@@ -27,6 +31,10 @@ export function buildCustomSettings(payload: any): CompletionSettings | undefine
   }
   if (payload.cache_prompt != null) settings.cache_prompt = payload.cache_prompt
   if (payload.ignore_eos != null) settings.ignore_eos = payload.ignore_eos
+  if (payload.tools != null) settings.tools = payload.tools
+  if (payload.tool_choice != null) settings.tool_choice = payload.tool_choice
+  if (payload.parallel_tool_calls != null) settings.parallel_tool_calls = payload.parallel_tool_calls
+  if (payload.response_format != null) settings.response_format = payload.response_format
 
   return Object.keys(settings).length > 0 ? settings : undefined
 }

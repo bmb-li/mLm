@@ -2,8 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { TCPServer } from '../services/tcp/TCPServer'
 import type { CompletionSettings } from '../services/tcp/settingsBuilder'
+import type { ParsedMessage } from '../services/tcp/messageParser'
 import type { CustomModel } from '../utils/storage'
 import { useModelContext } from '../contexts/ModelContext'
+
+const TOOL_CALLING_KEY = '@llama_server_tool_calling'
 
 interface ServerState {
   isRunning: boolean
@@ -12,6 +15,18 @@ interface ServerState {
   clientCount: number
   isLoading: boolean
   logs: string[]
+  toolCallingEnabled: boolean
+}
+
+interface CompletionResult {
+  content: string
+  text: string
+  reasoning_content: string
+  tool_calls?: Array<{
+    id?: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
 }
 
 export function useLocalServer() {
@@ -22,6 +37,7 @@ export function useLocalServer() {
     clientCount: 0,
     isLoading: false,
     logs: [],
+    toolCallingEnabled: true,
   })
 
   const [activeModel, setActiveModel] = useState<{ name: string; path: string } | null>(null)
@@ -46,30 +62,58 @@ export function useLocalServer() {
     syncActiveModel()
   }, [syncActiveModel])
 
+  useEffect(() => {
+    AsyncStorage.getItem(TOOL_CALLING_KEY).then(val => {
+      if (val !== null) {
+        setState(prev => ({ ...prev, toolCallingEnabled: val === 'true' }))
+      }
+    }).catch(() => {})
+  }, [])
+
   const getActiveModel = useCallback(() => {
     return activeModelRef.current
   }, [])
 
+  const setToolCallingEnabled = useCallback(async (enabled: boolean) => {
+    setState(prev => ({ ...prev, toolCallingEnabled: enabled }))
+    await AsyncStorage.setItem(TOOL_CALLING_KEY, enabled ? 'true' : 'false')
+  }, [])
+
   const modelContextRef = useRef(modelContext)
   modelContextRef.current = modelContext
+  const toolCallingRef = useRef(true)
+  toolCallingRef.current = state.toolCallingEnabled
 
   const generateCompletion = useCallback(async (
-    messages: { role: string; content: string }[],
+    messages: ParsedMessage[],
     settings?: CompletionSettings,
     onToken?: (token: string) => boolean,
     modelId?: string,
-  ): Promise<string> => {
+  ): Promise<CompletionResult> => {
     const mc = modelContextRef.current
-    const ctx = mc.context
-    if (!ctx) throw new Error('No model loaded')
+    let ctx = mc.context
 
-    if (modelId && (modelId !== mc.activeModelName)) {
+    if (!ctx && modelId) {
       const json = await AsyncStorage.getItem('@llama_custom_models')
       const customModels: CustomModel[] = json ? JSON.parse(json) : []
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Auto-loading model: ${modelId}`)
-        await mc.loadModel(found.localPath, modelId)
+        ctx = await mc.loadModel(found.localPath, modelId)
+      } else {
+        throw new Error(`Model "${modelId}" not found locally`)
+      }
+    }
+
+    if (!ctx) throw new Error('No model loaded')
+
+    if (modelId && modelId !== mc.activeModelName) {
+      const json = await AsyncStorage.getItem('@llama_custom_models')
+      const customModels: CustomModel[] = json ? JSON.parse(json) : []
+      const found = customModels.find(m => m.id === modelId || m.filename === modelId)
+      if (found?.localPath) {
+        serverRef.current?.addLog(`Switching to model: ${modelId}`)
+        ctx = await mc.loadModel(found.localPath, modelId)
       } else {
         throw new Error(`Model "${modelId}" not found locally`)
       }
@@ -85,6 +129,11 @@ export function useLocalServer() {
       ...(settings?.seed != null && { seed: settings.seed }),
       ...(settings?.stop != null && settings.stop.length > 0 && { stop: settings.stop }),
       ...(settings?.ignore_eos != null && { ignore_eos: settings.ignore_eos }),
+      ...(settings?.tools != null && toolCallingRef.current && { tools: settings.tools }),
+      ...(settings?.tool_choice != null && toolCallingRef.current && { tool_choice: settings.tool_choice }),
+      ...(settings?.response_format != null && { response_format: settings.response_format }),
+      ...(settings?.tools != null && !toolCallingRef.current && { tools: undefined }),
+      ...(settings?.tool_choice != null && !toolCallingRef.current && { tool_choice: undefined }),
     }
 
     const { promise, stop } = await ctx.parallel.completion(
@@ -100,7 +149,12 @@ export function useLocalServer() {
     )
 
     const result = await promise
-    return result.content || result.text || ''
+    return {
+      content: result.content || result.text || '',
+      text: result.text || '',
+      reasoning_content: result.reasoning_content || '',
+      tool_calls: result.tool_calls,
+    }
   }, [])
 
   const generateEmbedding = useCallback(async (input: string): Promise<number[]> => {
@@ -145,20 +199,22 @@ export function useLocalServer() {
 
   const loadModel = useCallback(async (path: string, projectorPath?: string) => {
     try {
+      const mc = modelContextRef.current
       const name = path.split('/').pop() || path
-      await modelContext.loadModel(path, name)
+      await mc.loadModel(path, name)
     } catch (error) {
       serverRef.current?.addLog(`Failed to load model: ${error instanceof Error ? error.message : 'unknown'}`)
       throw error
     }
-  }, [modelContext])
+  }, [])
 
   const unloadModel = useCallback(async () => {
-    await modelContext.unloadModel()
+    const mc = modelContextRef.current
+    await mc.unloadModel()
     activeModelRef.current = null
     setActiveModel(null)
     serverRef.current?.addLog('Model unloaded')
-  }, [modelContext])
+  }, [])
 
   const startServer = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true }))
@@ -196,6 +252,7 @@ export function useLocalServer() {
         clientCount: 0,
         isLoading: false,
         logs: [],
+        toolCallingEnabled: toolCallingRef.current,
       })
     } catch (error) {
       if (statusIntervalRef.current) {
@@ -218,14 +275,15 @@ export function useLocalServer() {
       serverRef.current = null
     }
 
-    setState({
-      isRunning: false,
-      url: '',
-      port: 8889,
-      clientCount: 0,
-      isLoading: false,
-      logs: [],
-    })
+      setState({
+        isRunning: false,
+        url: '',
+        port: 8889,
+        clientCount: 0,
+        isLoading: false,
+        logs: [],
+        toolCallingEnabled: toolCallingRef.current,
+      })
   }, [])
 
   useEffect(() => {
@@ -246,5 +304,6 @@ export function useLocalServer() {
     loadModel,
     unloadModel,
     activeModel,
+    setToolCallingEnabled,
   }
 }
