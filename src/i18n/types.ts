@@ -100,6 +100,24 @@ export type TranslationStrings = {
     toolCalling: string
     toolCallingDesc: string
   }
+  search: {
+    webSearch: string
+    enableSearch: string
+    searchEngine: string
+    searchEngineDesc: string
+    tavilyApiKey: string
+    tavilyApiKeyDesc: string
+    searching: string
+    resultsCount: string
+    sources: string
+    noResults: string
+    searchError: string
+    engineGoogle: string
+    engineBing: string
+    engineBaidu: string
+    engineTavily: string
+    engineMetaso: string
+  }
   settings: {
     title: string
     appearance: string

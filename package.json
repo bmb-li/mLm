@@ -1,6 +1,6 @@
 {
   "name": "mLm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "repository": {
     "type": "git",
@@ -40,6 +40,7 @@
     "react-native-screens": "^4.4.0",
     "react-native-svg": "^15.15.4",
     "react-native-tcp-socket": "^6.4.1",
+    "react-native-webview": "^13.16.1",
     "whatwg-url-without-unicode": "^8.0.0-3",
     "zod": "3",
     "zod-to-json-schema": "^3.24.6"

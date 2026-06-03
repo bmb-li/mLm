@@ -1,5 +1,5 @@
-import React from 'react'
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking } from 'react-native'
+import React, { useState, useEffect } from 'react'
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, StyleSheet, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -7,6 +7,9 @@ import type { Language } from '../i18n/types'
 import AppHeader from '../components/AppHeader'
 import SettingsSection from '../components/SettingsSection'
 import { BuildInfo, getBackendDevicesInfo } from '../../modules/llama.rn/src'
+import { loadSearchEngine, saveSearchEngine, loadTavilyApiKey, saveTavilyApiKey } from '../features/websearch/utils/searchStorage'
+import { getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
+import type { SearchEngine } from '../features/websearch/types'
 
 export default function SettingsScreen({ navigation }: { navigation: any }) {
   const { theme, themeMode, setThemeMode } = useTheme()
@@ -23,6 +26,31 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
     { label: 'English', value: 'en' },
     { label: '中文', value: 'zh' },
   ]
+
+  const [searchEngine, setSearchEngine] = useState<SearchEngine>('google')
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const [showTavilyInput, setShowTavilyInput] = useState(false)
+  const [tavilyApiKey, setTavilyApiKey] = useState('')
+
+  useEffect(() => {
+    loadSearchEngine().then(setSearchEngine)
+    loadTavilyApiKey().then(setTavilyApiKey)
+  }, [])
+
+  const handleTavilyKeyChange = (text: string) => {
+    setTavilyApiKey(text)
+    saveTavilyApiKey(text)
+  }
+
+  const getEngineLabel = (engine: SearchEngine): string => {
+    switch (engine) {
+      case 'google': return t.search.engineGoogle
+      case 'bing': return t.search.engineBing
+      case 'baidu': return t.search.engineBaidu
+      case 'tavily': return t.search.engineTavily
+      case 'metaso': return t.search.engineMetaso
+    }
+  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['left', 'right']}>
@@ -125,6 +153,75 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
           </TouchableOpacity>
         </SettingsSection>
 
+        <SettingsSection title={t.search.webSearch}>
+          <TouchableOpacity onPress={() => setSearchExpanded(!searchExpanded)} style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.card }]}>
+                <Image
+                  source={getSearchEngineIcon(searchEngine, theme.dark)}
+                  style={{ width: 22, height: 22 }}
+                  resizeMode="contain"
+                />
+              </View>
+              <View style={styles.settingTextContainer}>
+                <Text style={[styles.settingText, { color: colors.text }]}>
+                  {searchExpanded ? t.search.searchEngine : `${getSearchEngineIcon(searchEngine)} ${getEngineLabel(searchEngine)}`}
+                </Text>
+                <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                  {searchExpanded ? ' ' : t.search.searchEngineDesc}
+                </Text>
+              </View>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: 18, transform: [{ rotate: searchExpanded ? '90deg' : '0deg' }] }}>›</Text>
+          </TouchableOpacity>
+
+          {searchExpanded && (
+            <View style={{ paddingBottom: 8 }}>
+              {([
+                { id: 'google' as const, label: t.search.engineGoogle },
+                { id: 'bing' as const, label: t.search.engineBing },
+                { id: 'baidu' as const, label: t.search.engineBaidu },
+                { id: 'tavily' as const, label: t.search.engineTavily },
+              { id: 'metaso' as const, label: t.search.engineMetaso },
+              ]).map(eng => (
+                <View key={eng.id}>
+                  <TouchableOpacity style={[styles.optionRow, { alignItems: 'center', justifyContent: 'space-between' }]} onPress={() => {
+                    setSearchEngine(eng.id)
+                    saveSearchEngine(eng.id)
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                      <View style={[styles.radio, searchEngine === eng.id && { backgroundColor: colors.primary, borderColor: colors.primary }]} />
+                      <Image source={getSearchEngineIcon(eng.id, theme.dark)} style={{ width: 24, height: 24, marginLeft: 8 }} resizeMode="contain" />
+                      <Text style={[styles.optionText, { color: colors.text, marginLeft: 6 }]}>{eng.label}</Text>
+                    </View>
+                    {eng.id === 'tavily' && (
+                      <TouchableOpacity onPress={() => setShowTavilyInput(!showTavilyInput)} style={{ paddingHorizontal: 8 }}>
+                        <Text style={{ color: colors.textSecondary, fontSize: 16 }}>⋯</Text>
+                      </TouchableOpacity>
+                    )}
+                  </TouchableOpacity>
+                  {eng.id === 'tavily' && showTavilyInput && (
+                    <View style={{ paddingHorizontal: 32, paddingBottom: 12 }}>
+                      <TextInput
+                        value={tavilyApiKey}
+                        onChangeText={handleTavilyKeyChange}
+                        placeholder={t.search.tavilyApiKey}
+                        placeholderTextColor={colors.textSecondary}
+                        secureTextEntry
+                        style={{
+                          borderWidth: 1, borderColor: colors.border, borderRadius: 8,
+                          paddingHorizontal: 12, paddingVertical: 8, color: colors.text,
+                          fontSize: 14, backgroundColor: colors.inputBackground,
+                        }}
+                      />
+                    </View>
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </SettingsSection>
+
         <SettingsSection title={t.settings.about}>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
@@ -136,7 +233,7 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
                   {t.settings.version}
                 </Text>
                 <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
-                  mLm 0.1.0 (llama.rn b{BuildInfo.number})
+                  mLm 0.2.0 (llama.rn b{BuildInfo.number})
                 </Text>
               </View>
             </View>
@@ -201,5 +298,21 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
+  },
+  optionList: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  optionText: {
+    fontSize: 15,
+    paddingVertical: 6,
+  },
+  radio: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#ccc',
+    marginLeft: 8,
   },
 })

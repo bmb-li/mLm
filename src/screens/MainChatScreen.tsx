@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions } from 'react-native'
+import { useFocusEffect } from '@react-navigation/native'
+import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Clipboard from '@react-native-clipboard/clipboard'
@@ -10,12 +11,19 @@ import ModelSelectorBar from '../components/ModelSelectorBar'
 import CompletionParamsModal from '../components/CompletionParamsModal'
 import { useModelContext } from '../contexts/ModelContext'
 import { useStoredCompletionParams } from '../hooks/useStoredSetting'
+import { searchWebViaApi, buildSearchSystemPrompt, getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
+import { enrichWithContent } from '../features/websearch/services/ContentFetchService'
+import { loadSearchEnabled, loadSearchEngine, loadTavilyApiKey } from '../features/websearch/utils/searchStorage'
+import type { SearchResult, SearchEngine } from '../features/websearch/types'
+import SearchWebView from '../features/websearch/services/SearchWebView'
+import SearchResultModal from '../features/websearch/services/SearchResultModal'
 
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   reasoningContent?: string
+  searchResults?: SearchResult[]
   timings?: any
 }
 
@@ -68,6 +76,26 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [editText, setEditText] = useState('')
   const [selectableMsgId, setSelectableMsgId] = useState<string | null>(null)
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
+
+  const [searchEnabled, setSearchEnabled] = useState(false)
+  const [searchEngine, setSearchEngine] = useState<SearchEngine>('google')
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [showSearchSources, setShowSearchSources] = useState<string>('')
+  const [activeSearchQuery, setActiveSearchQuery] = useState('')
+  const searchResultsRef = useRef<SearchResult[] | null>(null)
+  const tavilyApiKeyRef = useRef('')
+  const searchResolveRef = useRef<((r: SearchResult[]) => void) | null>(null)
+  const searchRejectRef = useRef<((e: string) => void) | null>(null)
+  const [showMetasoModal, setShowMetasoModal] = useState(false)
+  const pendingQueryRef = useRef('')
+  const pendingAssistantIdRef = useRef('')
+
+  useFocusEffect(useCallback(() => {
+    loadSearchEnabled().then(setSearchEnabled)
+    loadSearchEngine().then(setSearchEngine)
+    loadTavilyApiKey().then(k => { tavilyApiKeyRef.current = k })
+  }, []))
 
   const { context, isModelReady, activeModelName } = useModelContext()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
@@ -136,12 +164,70 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setInputText('')
     Keyboard.dismiss()
+
+    // 秘塔搜索：弹出 WebView 窗口让用户查看结果
+    if (searchEnabled && searchEngine === 'metaso') {
+      pendingQueryRef.current = text
+      pendingAssistantIdRef.current = assistantId
+      setShowMetasoModal(true)
+      return
+    }
+
     setIsStreaming(true)
     autoExpandedRef.current = false
 
     try {
+      let searchSystemPrompt = ''
+      let searchHits: SearchResult[] | null = null
+
+      if (searchEnabled) {
+        setIsSearching(true)
+        setActiveSearchQuery(text)
+        setMessages(prev => prev.map(msg =>
+          msg.id === assistantId ? { ...msg, content: '🔍 ' + t.search.searching } : msg,
+        ))
+        try {
+          let results: SearchResult[]
+          if (searchEngine === 'tavily') {
+            results = await searchWebViaApi(text, searchEngine, tavilyApiKeyRef.current)
+          } else {
+            results = await new Promise<SearchResult[]>((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error('Search timeout')), 30000)
+              searchResolveRef.current = (r: SearchResult[]) => {
+                clearTimeout(timeout)
+                resolve(r)
+              }
+              searchRejectRef.current = (e: string) => {
+                clearTimeout(timeout)
+                reject(new Error(e))
+              }
+            })
+            results = await enrichWithContent(results)
+          }
+          searchHits = results
+          searchResultsRef.current = results
+          setSearchResults(results)
+          if (results.length > 0) {
+            searchSystemPrompt = buildSearchSystemPrompt(results, text)
+          }
+        } catch (e: any) {
+          searchHits = null
+          searchResultsRef.current = null
+          setSearchResults(null)
+          setMessages(prev => prev.map(msg =>
+            msg.id === assistantId ? { ...msg, content: `⚠️ ${t.search.searchError}: ${e.message || ''}` } : msg,
+          ))
+        } finally {
+          setIsSearching(false)
+          setActiveSearchQuery('')
+        }
+      }
+
+      const systemContent = searchSystemPrompt
+        ? DEFAULT_SYSTEM_PROMPT + '\n\n' + searchSystemPrompt
+        : DEFAULT_SYSTEM_PROMPT
       const allMessages = [
-        { role: 'system' as const, content: DEFAULT_SYSTEM_PROMPT },
+        { role: 'system' as const, content: systemContent },
         ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
         { role: 'user' as const, content: text },
       ]
@@ -172,6 +258,59 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
       const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
       setMessages(prev => prev.map(msg =>
+        msg.id === assistantId ? { ...msg, content: finalContent, searchResults: searchHits || undefined, timings: completionResult.timings } : msg,
+      ))
+    } catch (error: any) {
+      Alert.alert(t.common.error, error.message)
+    } finally {
+      setIsStreaming(false)
+    }
+  }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine])
+
+  const handleMetasoResults = useCallback(async (extractedText: string) => {
+    setShowMetasoModal(false)
+    const text = pendingQueryRef.current
+    const assistantId = pendingAssistantIdRef.current
+    if (!text || !assistantId) return
+
+    setIsStreaming(true)
+    autoExpandedRef.current = false
+
+    try {
+      const systemContent = DEFAULT_SYSTEM_PROMPT + '\n\n' + buildSearchSystemPrompt(
+        [{ title: '', url: '', content: extractedText }], text,
+      )
+      const allMessages = [
+        { role: 'system' as const, content: systemContent },
+        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user' as const, content: text },
+      ]
+
+      const params = completionParams || {}
+      const { promise, stop } = await context.parallel.completion(
+        { ...params, messages: allMessages, reasoning_format: 'auto' },
+        (_reqId: number, data: any) => {
+          const reasoningContent = data.reasoning_content || ''
+          let content = data.content || data.accumulated_text || ''
+          if (reasoningContent || /<think>/i.test(content)) {
+            content = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim()
+          }
+          if (content || reasoningContent) {
+            setMessages(prev => prev.map(msg =>
+              msg.id === assistantId ? { ...msg, content, reasoningContent } : msg,
+            ))
+          }
+          if (reasoningContent && reasoningPreferenceRef.current && !autoExpandedRef.current) {
+            autoExpandedRef.current = true
+            setExpandedReasoning(prev => new Set(prev).add(assistantId))
+          }
+        },
+      )
+      stopRef.current = stop
+      const completionResult = await promise
+      stopRef.current = null
+      const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
+      setMessages(prev => prev.map(msg =>
         msg.id === assistantId ? { ...msg, content: finalContent, timings: completionResult.timings } : msg,
       ))
     } catch (error: any) {
@@ -179,7 +318,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     } finally {
       setIsStreaming(false)
     }
-  }, [inputText, isStreaming, context, messages, completionParams])
+  }, [context, messages, completionParams])
 
   const toggleReasoning = (id: string) => {
     setExpandedReasoning(prev => {
@@ -387,11 +526,34 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             </View>
           </View>
         ) : (
-          <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
-            <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
-              {item.content || (isStreaming && !isUser ? '...' : '')}
-            </Text>
-          </View>
+          <>
+            {item.searchResults && item.searchResults.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setShowSearchSources(prev => prev === item.id ? '' : item.id)}
+                style={{ paddingHorizontal: 14, paddingTop: 8, paddingBottom: 2 }}
+              >
+                <Text style={{ fontSize: 12, color: '#4A90D9', fontWeight: '500' }}>
+                  {showSearchSources === item.id ? '▼' : '▶'} 🌐 {t.search.sources} ({item.searchResults.length})
+                </Text>
+              </TouchableOpacity>
+            )}
+            {showSearchSources === item.id && item.searchResults && (
+              <View style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
+                {item.searchResults.map((sr, i) => (
+                  <TouchableOpacity key={i} onPress={() => {}} style={{ marginVertical: 2 }}>
+                    <Text style={{ fontSize: 11, color: '#4A90D9' }} numberOfLines={1}>
+                      [{i + 1}] {sr.title}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+              <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
+                {item.content || (isStreaming && !isUser ? '...' : '')}
+              </Text>
+            </View>
+          </>
         )}
         {!isUser && (
           <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
@@ -521,6 +683,16 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
             borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface,
           }}>
+            <TouchableOpacity
+              onPress={() => setSearchEnabled(!searchEnabled)}
+              style={{ marginRight: 8, width: 28, height: 28, justifyContent: 'center', alignItems: 'center' }}
+            >
+              <Image
+                source={searchEnabled ? getSearchEngineIcon(searchEngine, theme.dark) : require('../assets/search/web_search_grey.png')}
+                style={{ width: 22, height: 22, opacity: searchEnabled ? 1 : 0.4 }}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
             <TextInput
               value={inputText}
               onChangeText={setInputText}
@@ -619,6 +791,32 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           </View>
         </View>
       </Modal>
+
+
+      {/* 隐藏 WebView 用于 Google/Bing/Baidu/Tavily 搜索 */}
+      {activeSearchQuery !== '' && searchEngine !== 'tavily' && searchEngine !== 'metaso' && (
+        <SearchWebView
+          query={activeSearchQuery}
+          engine={searchEngine}
+          onResults={(results) => {
+            searchResolveRef.current?.(results)
+            searchResolveRef.current = null
+          }}
+          onError={(err) => {
+            searchRejectRef.current?.(err)
+            searchRejectRef.current = null
+          }}
+          onReady={() => {}}
+        />
+      )}
+
+      {/* 秘塔搜索弹窗 */}
+      <SearchResultModal
+        visible={showMetasoModal}
+        query={pendingQueryRef.current}
+        onUseResults={handleMetasoResults}
+        onClose={() => setShowMetasoModal(false)}
+      />
     </SafeAreaView>
   )
 }

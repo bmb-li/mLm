@@ -3918,7 +3918,7 @@ internal-slot@^1.0.3, internal-slot@^1.0.5:
     has "^1.0.3"
     side-channel "^1.0.4"
 
-invariant@^2.2.4:
+invariant@^2.2.4, invariant@2.2.4:
   version "2.2.4"
   resolved "https://registry.npmjs.org/invariant/-/invariant-2.2.4.tgz"
   integrity sha512-phJfQVBuaJM5raOpJjSfkiD6BpbCE4Ns//LaXl6wGYtUBY83nWS6Rf9tXm2e8VaK60JEjYldbPif/A2B1C2gNA==
@@ -5768,6 +5768,14 @@ react-native-tcp-socket@^6.4.1:
   dependencies:
     buffer "^5.4.3"
     eventemitter3 "^4.0.7"
+
+react-native-webview@^13.16.1:
+  version "13.16.1"
+  resolved "https://registry.npmjs.org/react-native-webview/-/react-native-webview-13.16.1.tgz"
+  integrity sha512-If0eHhoEdOYDcHsX+xBFwHMbWBGK1BvGDQDQdVkwtSIXiq1uiqjkpWVP2uQ1as94J0CzvFE9PUNDuhiX0Z6ubw==
+  dependencies:
+    escape-string-regexp "^4.0.0"
+    invariant "2.2.4"
 
 react-native-worklets@~0.6.0:
   version "0.6.1"
