@@ -17,6 +17,9 @@ import { loadSearchEnabled, loadSearchEngine, loadTavilyApiKey } from '../featur
 import type { SearchResult, SearchEngine } from '../features/websearch/types'
 import SearchWebView from '../features/websearch/services/SearchWebView'
 import SearchResultModal from '../features/websearch/services/SearchResultModal'
+import { launchCamera, launchImageLibrary } from 'react-native-image-picker'
+import RNBlobUtil from 'react-native-blob-util'
+import Icon from '@react-native-vector-icons/material-design-icons'
 
 interface ChatMessage {
   id: string
@@ -24,6 +27,7 @@ interface ChatMessage {
   content: string
   reasoningContent?: string
   searchResults?: SearchResult[]
+  imageData?: string
   timings?: any
 }
 
@@ -100,6 +104,13 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const { context, isModelReady, activeModelName } = useModelContext()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
 
+  const [showAttachMenu, setShowAttachMenu] = useState(false)
+  const [pendingMedia, setPendingMedia] = useState<{ type: 'image' | 'audio'; data: string; mimeType: string } | null>(null)
+  const [isVoiceMode, setIsVoiceMode] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const recordingRef = useRef<{ stop: () => Promise<string> } | null>(null)
+  const processingImageRef = useRef(false)
+
   useEffect(() => {
     AsyncStorage.getItem(CONVERSATIONS_KEY).then(data => {
       if (data) setConversations(JSON.parse(data))
@@ -148,22 +159,106 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     setIsStreaming(false)
   }, [])
 
+  const handleTakePhoto = useCallback(async () => {
+    try {
+      const result = await launchCamera({ mediaType: 'photo', quality: 0.8, includeBase64: false })
+      if (result.assets?.[0]?.uri) {
+        const b64 = await RNBlobUtil.fs.readFile(result.assets[0].uri.replace('file://', ''), 'base64')
+        const mimeType = result.assets[0].type || 'image/jpeg'
+        setPendingMedia({ type: 'image', data: `data:${mimeType};base64,${b64}`, mimeType })
+      }
+    } catch {}
+    setShowAttachMenu(false)
+  }, [])
+
+  const handlePickFromGallery = useCallback(async () => {
+    try {
+      const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.8, includeBase64: false })
+      if (result.assets?.[0]?.uri) {
+        const b64 = await RNBlobUtil.fs.readFile(result.assets[0].uri.replace('file://', ''), 'base64')
+        const mimeType = result.assets[0].type || 'image/jpeg'
+        setPendingMedia({ type: 'image', data: `data:${mimeType};base64,${b64}`, mimeType })
+      }
+    } catch {}
+    setShowAttachMenu(false)
+  }, [])
+
+  const handlePickFile = useCallback(async () => {
+    try {
+      const { pick } = require('@react-native-documents/picker')
+      const [file] = await pick({ type: ['*/*'] })
+      if (file?.uri) {
+        const path = file.uri.replace('file://', '')
+        const b64 = await RNBlobUtil.fs.readFile(path, 'base64')
+        const mimeType = file.type || 'application/octet-stream'
+        const isImage = mimeType.startsWith('image/')
+        if (isImage) {
+          setPendingMedia({ type: 'image', data: `data:${mimeType};base64,${b64}`, mimeType })
+        } else if (mimeType.startsWith('audio/')) {
+          setPendingMedia({ type: 'audio', data: `data:${mimeType};base64,${b64}`, mimeType })
+        }
+      }
+    } catch {}
+    setShowAttachMenu(false)
+  }, [])
+
+  const handleStartRecording = useCallback(async () => {
+    try {
+      setIsRecording(true)
+      const AudioRecord = require('react-native-audio-recorder').default || require('react-native-audio-recorder')
+      if (AudioRecord?.start) {
+        await AudioRecord.start()
+        recordingRef.current = { stop: async () => { await AudioRecord.stop(); return AudioRecord.getPath?.() || AudioRecord.getUri?.() || '' } }
+      }
+    } catch {
+      setIsRecording(false)
+    }
+  }, [])
+
+  const handleStopRecording = useCallback(async () => {
+    if (!recordingRef.current) { setIsRecording(false); return }
+    setIsRecording(false)
+    try {
+      const audioPath = await recordingRef.current.stop()
+      recordingRef.current = null
+      if (!audioPath) { setIsVoiceMode(false); return }
+      const b64 = await RNBlobUtil.fs.readFile(audioPath.replace('file://', ''), 'base64')
+      const media = { type: 'audio' as const, data: `data:audio/wav;base64,${b64}`, mimeType: 'audio/wav' }
+      setPendingMedia(media)
+      setIsVoiceMode(false)
+    } catch { setIsVoiceMode(false) }
+  }, [])
+
   const handleSend = useCallback(async () => {
     const text = inputText.trim()
-    if (!text || isStreaming) return
+    if ((!text && !pendingMedia) || isStreaming) return
 
     if (!context) {
       Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
       return
     }
 
-    const userMsg: ChatMessage = { id: `user_${Date.now()}`, role: 'user', content: text }
+    const userMsg: ChatMessage = { id: `user_${Date.now()}`, role: 'user', content: pendingMedia ? (text || '查看附件') : text, imageData: pendingMedia?.type === 'image' ? pendingMedia.data : undefined }
     const assistantId = `assistant_${Date.now()}`
     const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
 
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setInputText('')
     Keyboard.dismiss()
+
+    // 构建多模态或纯文本消息
+    let userContent: any
+    if (pendingMedia) {
+      userContent = [{ type: 'text', text: text || '描述一下这个' }]
+      if (pendingMedia.type === 'image') {
+        userContent.push({ type: 'image_url', image_url: { url: pendingMedia.data } })
+      } else if (pendingMedia.type === 'audio') {
+        const fmt = pendingMedia.mimeType?.includes('mp3') ? 'mp3' : 'wav'
+        userContent.push({ type: 'input_audio', input_audio: { format: fmt, data: pendingMedia.data.split(',')[1] || pendingMedia.data } })
+      }
+      setPendingMedia(null)
+      processingImageRef.current = true
+    }
 
     // 秘塔搜索：弹出 WebView 窗口让用户查看结果
     if (searchEnabled && searchEngine === 'metaso') {
@@ -229,13 +324,14 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const allMessages = [
         { role: 'system' as const, content: systemContent },
         ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user' as const, content: text },
+        { role: 'user' as const, content: userContent || text },
       ]
 
       const params = completionParams || {}
       const { promise, stop } = await context.parallel.completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
+          if (processingImageRef.current) processingImageRef.current = false
           const reasoningContent = data.reasoning_content || ''
           let content = data.content || data.accumulated_text || ''
           if (reasoningContent || /<think>/i.test(content)) {
@@ -466,7 +562,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           marginVertical: 4,
           marginHorizontal: 16,
           borderRadius: 16,
-          backgroundColor: isUser ? colors.primary : '#000000',
+          backgroundColor: isUser ? colors.card : '#000000',
           overflow: 'hidden',
           borderWidth: isSelectable ? 2 : 0,
           borderStyle: 'dashed',
@@ -549,8 +645,11 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               </View>
             )}
             <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+              {item.imageData && (
+                <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
+              )}
               <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
-                {item.content || (isStreaming && !isUser ? '...' : '')}
+                {item.content || (isStreaming && !isUser ? (processingImageRef.current ? '⏳ ' + t.chat.processing : '...') : '')}
               </Text>
             </View>
           </>
@@ -679,44 +778,125 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               onScrollBeginDrag={() => { if (selectableMsgId) setSelectableMsgId(null) }}
             />
           )}
+          {/* 输入区域 */}
           <View style={{
-            flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8,
             borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface,
           }}>
-            <TouchableOpacity
-              onPress={() => setSearchEnabled(!searchEnabled)}
-              style={{ marginRight: 8, width: 28, height: 28, justifyContent: 'center', alignItems: 'center' }}
-            >
-              <Image
-                source={searchEnabled ? getSearchEngineIcon(searchEngine, theme.dark) : require('../assets/search/web_search_grey.png')}
-                style={{ width: 22, height: 22, opacity: searchEnabled ? 1 : 0.4 }}
-                resizeMode="contain"
+            {/* 待发送附件预览 */}
+            {pendingMedia && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
+                {pendingMedia.type === 'image' ? (
+                  <Image source={{ uri: pendingMedia.data }} style={{ width: 40, height: 40, borderRadius: 6 }} />
+                ) : (
+                  <View style={{ width: 40, height: 40, borderRadius: 6, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text>🎤</Text>
+                  </View>
+                )}
+                <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, marginLeft: 8 }} numberOfLines={1}>
+                  {pendingMedia.type === 'image' ? '图片待发送' : '音频待发送'}
+                </Text>
+                <TouchableOpacity onPress={() => setPendingMedia(null)}>
+                  <Text style={{ color: colors.error, fontSize: 16 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* 第1行：编辑框 / 语音按钮 */}
+            {isVoiceMode ? (
+              <TouchableOpacity
+                onPressIn={handleStartRecording}
+                onPressOut={handleStopRecording}
+                style={{
+                  margin: 8, paddingVertical: 16, borderRadius: 12,
+                  backgroundColor: isRecording ? colors.error + '20' : colors.inputBackground,
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: isRecording ? colors.error : colors.text, fontSize: 16, fontWeight: '600' }}>
+                  {isRecording ? t.chat.voiceRelease : t.chat.voiceTip}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <TextInput
+                value={inputText}
+                onChangeText={(text) => { setInputText(text); if (text && isVoiceMode) setIsVoiceMode(false) }}
+                placeholder={isModelReady ? t.chat.typeMessage : t.chat.noModelSelected}
+                placeholderTextColor={colors.textSecondary}
+                multiline
+                style={{
+                  margin: 8, maxHeight: 100, paddingHorizontal: 14, paddingVertical: 10,
+                  borderRadius: 12, backgroundColor: colors.inputBackground, color: colors.text, fontSize: 15,
+                }}
               />
-            </TouchableOpacity>
-            <TextInput
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={isModelReady ? t.chat.typeMessage : t.chat.noModelSelected}
-              placeholderTextColor={colors.textSecondary}
-              multiline
-              style={{
-                flex: 1, maxHeight: 100, paddingHorizontal: 14, paddingVertical: 10,
-                borderRadius: 20, backgroundColor: colors.inputBackground, color: colors.text, fontSize: 15,
-              }}
-            />
-            <TouchableOpacity
-              onPress={isStreaming ? handleStop : handleSend}
-              disabled={isStreaming ? false : !inputText.trim() || !isModelReady || isReadOnly}
-              style={{
-                marginLeft: 8, width: 44, height: 44, borderRadius: 22,
-                backgroundColor: isStreaming ? colors.error : (inputText.trim() && isModelReady && !isReadOnly ? colors.primary : colors.disabled),
-                justifyContent: 'center', alignItems: 'center',
-              }}
-            >
-              <Text style={{ color: '#FFF', fontSize: isStreaming ? 20 : 18 }}>
-                {isStreaming ? '■' : '➤'}
-              </Text>
-            </TouchableOpacity>
+            )}
+
+            {/* 第2行：按钮栏 */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8 }}>
+              <TouchableOpacity
+                onPress={() => setSearchEnabled(!searchEnabled)}
+                style={{ width: 28, height: 28, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Image
+                  source={searchEnabled ? getSearchEngineIcon(searchEngine, theme.dark) : require('../assets/search/web_search_grey.png')}
+                  style={{ width: 22, height: 22, opacity: searchEnabled ? 1 : 0.4 }}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+
+              <View style={{ flex: 1 }} />
+
+              {!isStreaming && (
+                <TouchableOpacity
+                  onPress={() => setShowAttachMenu(!showAttachMenu)}
+                  style={{ width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' }}
+                >
+                  <Icon name={showAttachMenu ? 'close-circle-outline' : 'plus-circle-outline'} size={24} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+
+              <TouchableOpacity
+                onPress={isStreaming ? handleStop : (inputText.trim() || pendingMedia ? handleSend : () => setIsVoiceMode(!isVoiceMode))}
+                style={{
+                  marginLeft: 4, width: 44, height: 44, borderRadius: 22,
+                  backgroundColor: isStreaming ? colors.error : (isVoiceMode ? colors.primary : (inputText.trim() || pendingMedia ? colors.primary : colors.disabled)),
+                  justifyContent: 'center', alignItems: 'center',
+                }}
+              >
+                {isStreaming ? (
+                  <Icon name="stop" size={20} color="#FFF" />
+                ) : isVoiceMode ? (
+                  <Icon name="microphone" size={22} color="#FFF" />
+                ) : (inputText.trim() || pendingMedia) ? (
+                  <Icon name="send" size={20} color="#FFF" />
+                ) : (
+                  <Icon name="microphone" size={22} color="#FFF" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* 第3行：附件菜单 */}
+            {showAttachMenu && (
+              <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+                <TouchableOpacity onPress={handleTakePhoto} style={{ alignItems: 'center' }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20 }}>📷</Text>
+                  </View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>{t.chat.attachPhoto}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handlePickFromGallery} style={{ alignItems: 'center' }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20 }}>🖼️</Text>
+                  </View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>{t.chat.attachAlbum}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handlePickFile} style={{ alignItems: 'center' }}>
+                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ fontSize: 20 }}>📁</Text>
+                  </View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>{t.chat.attachFile}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>

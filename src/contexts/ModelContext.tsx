@@ -6,15 +6,22 @@ import { loadContextParams, type ContextParams } from '../utils/storage'
 
 const ACTIVE_MODEL_KEY = '@llama_active_model'
 
+interface MultimodalSupport {
+  vision: boolean
+  audio: boolean
+}
+
 interface ModelState {
   context: LlamaContext | null
   isModelReady: boolean
   isLoading: boolean
   initProgress: number
   activeModelName: string | null
-  loadModel: (path: string, name: string) => Promise<LlamaContext>
+  loadModel: (path: string, name: string, mmprojPath?: string) => Promise<LlamaContext>
   unloadModel: () => Promise<void>
   clearCache: () => Promise<void>
+  multimodalSupport: MultimodalSupport | null
+  mmprojPath: string | null
 }
 
 const ModelContext = createContext<ModelState | null>(null)
@@ -25,7 +32,10 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(false)
   const [initProgress, setInitProgress] = useState(0)
   const [activeModelName, setActiveModelName] = useState<string | null>(null)
+  const [multimodalSupport, setMultimodalSupport] = useState<MultimodalSupport | null>(null)
+  const [mmprojPath, setMmprojPath] = useState<string | null>(null)
   const contextRef = useRef<LlamaContext | null>(null)
+  const mmprojPathRef = useRef<string | null>(null)
 
   useEffect(() => {
     contextRef.current = context
@@ -37,16 +47,19 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const loadModel = useCallback(async (path: string, name: string): Promise<LlamaContext> => {
+  const loadModel = useCallback(async (path: string, name: string, mmprojPath?: string): Promise<LlamaContext> => {
     try {
       setIsLoading(true)
       setInitProgress(0)
+      setMultimodalSupport(null)
+      setMmprojPath(null)
+      mmprojPathRef.current = null
 
       const cp: ContextParams | null = await loadContextParams()
       const nSlots = cp?.n_parallel ?? 1
       const llamaContext = await initLlama(
         { model: path, n_parallel: nSlots, ...(cp || {}) },
-        (progress) => setInitProgress(progress),
+        (progress) => setInitProgress(Math.round(progress * 0.8)),
       )
 
       if (contextRef.current && contextRef.current !== llamaContext) {
@@ -55,13 +68,25 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
 
       await llamaContext.parallel.enable({ n_parallel: nSlots, n_batch: 512 })
 
+      if (mmprojPath) {
+        setInitProgress(85)
+        const success = await llamaContext.initMultimodal({ path: mmprojPath, use_gpu: true })
+        if (success) {
+          setInitProgress(95)
+          const support = await llamaContext.getMultimodalSupport()
+          setMultimodalSupport(support)
+          setMmprojPath(mmprojPath)
+          mmprojPathRef.current = mmprojPath
+        }
+      }
+
       contextRef.current = llamaContext
       setContext(llamaContext)
       setIsModelReady(true)
       setActiveModelName(name)
       setInitProgress(100)
 
-      await AsyncStorage.setItem(ACTIVE_MODEL_KEY, JSON.stringify({ path, name }))
+      await AsyncStorage.setItem(ACTIVE_MODEL_KEY, JSON.stringify({ path, name, mmprojPath }))
       return llamaContext
     } catch (error: any) {
       console.error('Failed to load model:', error)
@@ -78,8 +103,14 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     setContext(null)
     setIsModelReady(false)
     setActiveModelName(null)
+    setMultimodalSupport(null)
+    setMmprojPath(null)
+    mmprojPathRef.current = null
     await AsyncStorage.removeItem(ACTIVE_MODEL_KEY)
     if (current) {
+      if (mmprojPathRef.current) {
+        await current.releaseMultimodal()
+      }
       await current.release()
     }
   }, [])
@@ -94,6 +125,7 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     <ModelContext.Provider value={{
       context, isModelReady, isLoading, initProgress, activeModelName,
       loadModel, unloadModel, clearCache,
+      multimodalSupport, mmprojPath,
     }}>
       {children}
     </ModelContext.Provider>

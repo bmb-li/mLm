@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, Clipboard, TextInput } from 'react-native'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, Clipboard, TextInput, Switch, ActivityIndicator, FlatList } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
 import RNBlobUtil from 'react-native-blob-util'
@@ -10,7 +10,7 @@ import ContextParamsModal from '../components/ContextParamsModal'
 import { MaskedProgress } from '../components/MaskedProgress'
 import { loadLlamaModelInfo } from '../../modules/llama.rn/src'
 import { useModelContext } from '../contexts/ModelContext'
-import { loadContextParams, saveContextParams, saveCustomModel, deleteCustomModel, type ContextParams, type CustomModel } from '../utils/storage'
+import { loadContextParams, saveContextParams, saveCustomModel, deleteCustomModel, updateCustomModel, type ContextParams, type CustomModel } from '../utils/storage'
 import { useStoredCustomModels } from '../hooks/useStoredSetting'
 
 function fmt(v: any): string {
@@ -33,6 +33,10 @@ export default function ModelScreen() {
   const [renameVis, setRenameVis] = useState(false)
   const [renameModel, setRenameModel] = useState<CustomModel | null>(null)
   const [renameText, setRenameText] = useState('')
+  const [activeTab, setActiveTab] = useState<'available' | 'mmproj'>('available')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [mmprojPickerTarget, setMmprojPickerTarget] = useState<string | null>(null)
+  const [importingFor, setImportingFor] = useState<string | null>(null)
 
   const { isModelReady, isLoading, initProgress, activeModelName, loadModel, unloadModel } = useModelContext()
   const { value: customModels, reload: reloadCustomModels } = useStoredCustomModels()
@@ -41,9 +45,81 @@ export default function ModelScreen() {
     loadContextParams().then(setCtxParams).catch(() => {})
   }, [])
 
-  const handleLoadModel = async (path: string, name: string) => {
+  const filteredModels = useMemo(() => {
+    return (customModels || []).filter(m => {
+      const isMmproj = (m.filename || '').toLowerCase().includes('mmproj')
+      if (activeTab === 'available') return !isMmproj
+      return isMmproj
+    })
+  }, [customModels, activeTab])
+
+  const availableMmprojFiles = useMemo(() => {
+    const seen = new Set<string>()
+    return (customModels || []).reduce<{ label: string; path: string }[]>((acc, m) => {
+      const isMmproj = (m.filename || '').toLowerCase().includes('mmproj')
+      const filePath = m.mmprojLocalPath || m.localPath || ''
+      if (isMmproj && filePath && !seen.has(filePath)) {
+        seen.add(filePath)
+        acc.push({ label: m.id, path: filePath })
+      }
+      return acc
+    }, [])
+  }, [customModels])
+
+  const updateModel = useCallback(async (model: CustomModel, changes: Partial<CustomModel>) => {
+    await updateCustomModel(model.id, changes)
+    reloadCustomModels()
+  }, [reloadCustomModels])
+
+  const handleImportMmproj = useCallback(async (model: CustomModel) => {
     try {
-      await loadModel(path, name)
+      setImportingFor(model.id)
+      const { pick, keepLocalCopy } = require('@react-native-documents/picker')
+      const [file] = await pick({ type: ['*/*'] })
+      if (!file?.uri || !file?.name) return
+      if (!file.name.toLowerCase().endsWith('.gguf')) {
+        Alert.alert('Invalid File', 'Please select a GGUF file')
+        return
+      }
+      const [localCopy] = await keepLocalCopy({
+        files: [{ uri: file.uri, fileName: file.name }],
+        destination: 'documentDirectory',
+      })
+      if (localCopy.status !== 'success') {
+        Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
+        return
+      }
+      await updateModel(model, { mmprojFilename: file.name, mmprojLocalPath: localCopy.localUri })
+    } catch (e: any) {
+      if (e?.code !== 'DOCUMENT_PICKER_CANCELED') Alert.alert(t.common.error, e.message)
+    } finally {
+      setImportingFor(null)
+    }
+  }, [updateModel, t])
+
+  const handleRemoveMmproj = useCallback(async (model: CustomModel) => {
+    await updateModel(model, { mmprojFilename: undefined, mmprojLocalPath: undefined })
+  }, [updateModel])
+
+  const handleToggleVision = useCallback(async (model: CustomModel, value: boolean) => {
+    await updateModel(model, { visionEnabled: value })
+  }, [updateModel])
+
+  const handleToggleAudio = useCallback(async (model: CustomModel, value: boolean) => {
+    await updateModel(model, { audioEnabled: value })
+  }, [updateModel])
+
+  const handleMmprojSelect = useCallback(async (targetId: string, path: string, label: string) => {
+    const model = (customModels || []).find(m => m.id === targetId)
+    if (model) {
+      await updateModel(model, { mmprojFilename: label, mmprojLocalPath: path })
+    }
+    setMmprojPickerTarget(null)
+  }, [customModels, updateModel])
+
+  const handleLoadModel = async (path: string, name: string, mmprojPath?: string) => {
+    try {
+      await loadModel(path, name, mmprojPath)
       ;(navigation as any).navigate('HomeTab')
     } catch (error: any) {
       Alert.alert(t.common.error, error.message)
@@ -176,17 +252,35 @@ export default function ModelScreen() {
           </>
         )}
 
-        <Text style={[s.secTtl, { color: c.primary }]}>{t.models.customModelsSection}</Text>
-        {(customModels || []).length === 0 && (
+        <View style={s.tabRow}>
+          {[
+            { key: 'available' as const, label: t.models.tabText },
+            { key: 'mmproj' as const, label: t.models.tabMmproj },
+          ].map(tab => (
+            <TouchableOpacity
+              key={tab.key}
+              style={[s.tab, { borderColor: c.border }, activeTab === tab.key && { backgroundColor: c.primary, borderColor: c.primary }]}
+              onPress={() => { setActiveTab(tab.key); setExpandedId(null) }}
+            >
+              <Text style={[s.tabTxt, { color: activeTab === tab.key ? '#FFF' : c.textSecondary }]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {(filteredModels || []).length === 0 && (
           <Text style={[s.empty, { color: c.textSecondary }]}>{t.models.noModels}</Text>
         )}
-        {(customModels || []).map(model => {
+        {(filteredModels || []).map(model => {
           const isActive = model.id === activeModelName
+          const isExpanded = expandedId === model.id
           return (
             <View key={model.id} style={[s.card, { backgroundColor: c.surface, borderColor: isActive ? c.primary : c.border }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                 {isActive && <View style={[s.dot, { backgroundColor: '#34A759', marginRight: 6 }]} />}
-                <Text style={[s.name, { color: c.text }]}>{model.id}</Text>
+                <Text style={[s.name, { color: c.text, flex: 1 }]}>{model.id}</Text>
+                {model.visionEnabled && <View style={[s.tag, { backgroundColor: c.primary + '20' }]}><Text style={[s.tagTxt, { color: c.primary }]}>视觉</Text></View>}
+                {model.audioEnabled && <View style={[s.tag, { backgroundColor: c.primary + '20', marginLeft: 4 }]}><Text style={[s.tagTxt, { color: c.primary }]}>音频</Text></View>}
               </View>
               <View style={s.acts}>
                 <TouchableOpacity style={[s.btn, { borderColor: c.primary }]} onPress={() => showInfo(model.localPath || '', model.id)}>
@@ -195,23 +289,65 @@ export default function ModelScreen() {
                 <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary }]} onPress={() => handleRenameOpen(model)}>
                   <Text style={[s.btnTxt, { color: c.textSecondary }]}>{t.models.rename}</Text>
                 </TouchableOpacity>
-                {isActive ? (
-                  <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={unloadModel}>
-                    <Text style={[s.btnTxt, { color: c.error }]}>{t.models.unload}</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity
-                    style={[s.btn, { borderColor: c.primary }]}
-                    onPress={() => handleLoadModel(model.localPath || '', model.id)}
-                    disabled={isLoading}
-                  >
-                    <Text style={[s.btnTxt, { color: c.primary }]}>{t.models.load}</Text>
-                  </TouchableOpacity>
+                {activeTab !== 'mmproj' && (
+                  isActive ? (
+                    <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={unloadModel}>
+                      <Text style={[s.btnTxt, { color: c.error }]}>{t.models.unload}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[s.btn, { borderColor: c.primary }]}
+                      onPress={() => handleLoadModel(model.localPath || '', model.id, model.mmprojLocalPath)}
+                      disabled={isLoading}
+                    >
+                      <Text style={[s.btnTxt, { color: c.primary }]}>{t.models.load}</Text>
+                    </TouchableOpacity>
+                  )
                 )}
                 <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={() => handleDelete(model)}>
                   <Text style={[s.btnTxt, { color: c.error }]}>{t.models.delete}</Text>
                 </TouchableOpacity>
+                {activeTab !== 'mmproj' && (
+                  <TouchableOpacity onPress={() => setExpandedId(isExpanded ? null : model.id)} style={{ marginLeft: 'auto', paddingHorizontal: 4 }}>
+                    <Text style={{ color: c.textSecondary, fontSize: 14 }}>{isExpanded ? '▲' : '▼'}</Text>
+                  </TouchableOpacity>
+                )}
               </View>
+
+              {isExpanded && (
+                <View style={{ marginTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, paddingTop: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <TouchableOpacity
+                      style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                      onPress={() => setMmprojPickerTarget(model.id)}
+                    >
+                      <Text style={{ color: model.mmprojFilename ? c.text : c.textSecondary, fontSize: 14 }}>
+                        {model.mmprojFilename || t.models.mmprojSelect}
+                      </Text>
+                      <Text style={{ color: c.textSecondary }}>›</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: model.mmprojLocalPath ? c.error : c.primary }}
+                      onPress={model.mmprojLocalPath ? () => handleRemoveMmproj(model) : () => handleImportMmproj(model)}
+                      disabled={importingFor === model.id}
+                    >
+                      <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                        {importingFor === model.id ? '...' : model.mmprojLocalPath ? t.models.removeMmproj : t.models.importMmproj}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Switch value={model.visionEnabled || false} onValueChange={v => handleToggleVision(model, v)} />
+                      <Text style={{ color: c.text, fontSize: 14 }}>{t.models.vision}</Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Switch value={model.audioEnabled || false} onValueChange={v => handleToggleAudio(model, v)} />
+                      <Text style={{ color: c.text, fontSize: 14 }}>{t.models.audio}</Text>
+                    </View>
+                  </View>
+                </View>
+              )}
             </View>
           )
         })}
@@ -286,6 +422,38 @@ export default function ModelScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* MMProj 选择器 */}
+      <Modal visible={mmprojPickerTarget !== null} transparent animationType="fade" onRequestClose={() => setMmprojPickerTarget(null)}>
+        <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setMmprojPickerTarget(null)}>
+          <View style={[s.modal, { backgroundColor: c.surface }]}>
+            <View style={[s.modalHdr, { borderBottomColor: c.border }]}>
+              <Text style={[s.modalTtl, { color: c.text }]}>{t.models.mmprojSelect}</Text>
+              <TouchableOpacity onPress={() => setMmprojPickerTarget(null)}>
+                <Text style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>{t.common.close}</Text>
+              </TouchableOpacity>
+            </View>
+            {availableMmprojFiles.length === 0 ? (
+              <Text style={{ color: c.textSecondary, textAlign: 'center', padding: 20 }}>{t.models.noMmproj}</Text>
+            ) : (
+              <FlatList
+                data={availableMmprojFiles}
+                keyExtractor={item => item.path}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{ paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border }}
+                    onPress={() => handleMmprojSelect(mmprojPickerTarget!, item.path, item.label)}
+                  >
+                    <Text style={{ color: c.text, fontSize: 15 }}>{item.label}</Text>
+                    <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{item.path}</Text>
+                  </TouchableOpacity>
+                )}
+                style={{ maxHeight: 300 }}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -315,4 +483,9 @@ const s = StyleSheet.create({
   copyBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginLeft: 8 },
   copyBtnTxt: { fontSize: 12, color: '#FFF', fontWeight: '600' },
   infoVal: { fontSize: 13, fontFamily: 'Courier', lineHeight: 18 },
+  tabRow: { flexDirection: 'row', paddingVertical: 10, gap: 8 },
+  tab: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, alignItems: 'center' },
+  tabTxt: { fontSize: 13, fontWeight: '600' },
+  tag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  tagTxt: { fontSize: 11, fontWeight: '600' },
 })

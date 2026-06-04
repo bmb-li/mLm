@@ -5695,6 +5695,11 @@ react-native-audio-api@^0.9.0:
   resolved "https://registry.npmjs.org/react-native-audio-api/-/react-native-audio-api-0.9.0.tgz"
   integrity sha512-A/s4NZaZcai42N71CVxtLAbFrjQwN+/djL3+CWdyaMp4uDR333eGmqA0VS3ZaSEhOmijv3kAy7d6J/khvaarjg==
 
+react-native-audio-recorder@^0.0.8:
+  version "0.0.8"
+  resolved "https://registry.npmjs.org/react-native-audio-recorder/-/react-native-audio-recorder-0.0.8.tgz"
+  integrity sha512-OHG71502Nwr3zd2semHKACQdWvIoFw6riq2narRf+jqLW7h89eSc32abyGwiH84gxRBb2nw66iaZ7Kpm0LjrQw==
+
 react-native-blob-util@^0.22.2:
   version "0.22.2"
   resolved "https://registry.npmjs.org/react-native-blob-util/-/react-native-blob-util-0.22.2.tgz"
@@ -5711,6 +5716,11 @@ react-native-gesture-handler@^2.24.0:
     "@egjs/hammerjs" "^2.0.17"
     hoist-non-react-statics "^3.3.0"
     invariant "^2.2.4"
+
+react-native-image-picker@^8.2.1:
+  version "8.2.1"
+  resolved "https://registry.npmjs.org/react-native-image-picker/-/react-native-image-picker-8.2.1.tgz"
+  integrity sha512-FBeGYJGFDjMdGCcyubDJgBAPCQ4L1D3hwLXyUU91jY9ahOZMTbluceVvRmrEKqnDPFJ0gF1NVhJ0nr1nROFLdg==
 
 react-native-image-viewing@^0.2.1:
   version "0.2.2"

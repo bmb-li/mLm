@@ -39,6 +39,13 @@ export type TranslationStrings = {
     selectText: string
     copyReasoning: string
     deleteMessage: string
+    attachPhoto: string
+    attachAlbum: string
+    attachFile: string
+    voiceTip: string
+    voiceRelease: string
+    recording: string
+    processing: string
   }
   models: {
     title: string
@@ -71,6 +78,15 @@ export type TranslationStrings = {
     renameTitle: string
     deleteConfirm: string
     copy: string
+    tabText: string
+    tabMultimodal: string
+    tabMmproj: string
+    vision: string
+    audio: string
+    mmprojSelect: string
+    noMmproj: string
+    removeMmproj: string
+    importMmproj: string
   }
   server: {
     title: string

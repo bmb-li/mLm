@@ -21,6 +21,8 @@ export interface CustomModel {
   addedAt: number
   localPath?: string
   mmprojLocalPath?: string
+  visionEnabled?: boolean
+  audioEnabled?: boolean
 }
 
 export interface MCPServer {
@@ -221,6 +223,19 @@ export const deleteCustomModel = async (modelId: string): Promise<void> => {
     await AsyncStorage.setItem(CUSTOM_MODELS_KEY, jsonValue)
   } catch (error) {
     console.error('Error deleting custom model:', error)
+    throw error
+  }
+}
+
+export const updateCustomModel = async (modelId: string, changes: Partial<CustomModel>): Promise<void> => {
+  try {
+    const models = await loadCustomModels()
+    const idx = models.findIndex(m => m.id === modelId)
+    if (idx === -1) throw new Error(`Model "${modelId}" not found`)
+    models[idx] = { ...models[idx], ...changes }
+    await AsyncStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(models))
+  } catch (error) {
+    console.error('Error updating custom model:', error)
     throw error
   }
 }
