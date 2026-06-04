@@ -1,12 +1,34 @@
 export interface ParsedMessage {
   role: string
-  content: string | null
+  content: string | Array<{
+    type: 'text' | 'image_url' | 'input_audio'
+    text?: string
+    image_url?: { url: string }
+    input_audio?: { format: string; data?: string; url?: string }
+  }> | null
   tool_calls?: Array<{
     id?: string
     type: 'function'
     function: { name: string; arguments: string }
   }>
   tool_call_id?: string
+}
+
+function parseContentPart(part: any): any {
+  if (part.type === 'image_url') {
+    return { type: 'image_url', image_url: { url: part.image_url?.url || '' } }
+  }
+  if (part.type === 'input_audio') {
+    return {
+      type: 'input_audio',
+      input_audio: {
+        format: part.input_audio?.format || 'wav',
+        data: part.input_audio?.data,
+        url: part.input_audio?.url,
+      },
+    }
+  }
+  return { type: 'text', text: part.text || '' }
 }
 
 export function parseMessagesFromPayload(payload: any): {
@@ -29,11 +51,7 @@ export function parseMessagesFromPayload(payload: any): {
       if (typeof msg.content === 'string') {
         parsed.content = msg.content
       } else if (Array.isArray(msg.content)) {
-        const text = msg.content
-          .filter((part: any) => part.type === 'text')
-          .map((part: any) => part.text || '')
-          .join('')
-        parsed.content = text || null
+        parsed.content = msg.content.map(parseContentPart)
       }
     }
 

@@ -2,6 +2,7 @@ import { parseJsonBody } from './jsonParser'
 import { parseMessagesFromPayload, parseMessagesOrPromptFromPayload } from './messageParser'
 import { buildCustomSettings } from './settingsBuilder'
 import type { CompletionSettings } from './settingsBuilder'
+import type { ParsedMessage } from './messageParser'
 import { sendChunkedResponseStart, writeChunk, endChunkedResponse, sendJSONResponse } from './responseUtils'
 
 function buildNDJSONChunk(model: string, content: string, done: boolean): any {
@@ -19,7 +20,7 @@ export async function handleChatRequest(
   method: string,
   path: string,
   generateCompletion: (
-    messages: { role: string; content: string }[],
+    messages: ParsedMessage[],
     settings?: CompletionSettings,
     onToken?: (token: string) => boolean,
   ) => Promise<string>,
@@ -89,7 +90,7 @@ export async function handleGenerateRequest(
   method: string,
   path: string,
   generateCompletion: (
-    messages: { role: string; content: string }[],
+    messages: ParsedMessage[],
     settings?: CompletionSettings,
     onToken?: (token: string) => boolean,
   ) => Promise<string>,

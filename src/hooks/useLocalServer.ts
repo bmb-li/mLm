@@ -99,7 +99,7 @@ export function useLocalServer() {
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Auto-loading model: ${modelId}`)
-        ctx = await mc.loadModel(found.localPath, modelId)
+        ctx = await mc.loadModel(found.localPath, modelId, found.mmprojLocalPath)
       } else {
         throw new Error(`Model "${modelId}" not found locally`)
       }
@@ -113,7 +113,7 @@ export function useLocalServer() {
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Switching to model: ${modelId}`)
-        ctx = await mc.loadModel(found.localPath, modelId)
+        ctx = await mc.loadModel(found.localPath, modelId, found.mmprojLocalPath)
       } else {
         throw new Error(`Model "${modelId}" not found locally`)
       }
@@ -167,13 +167,15 @@ export function useLocalServer() {
     try {
       const json = await AsyncStorage.getItem('@llama_custom_models')
       const customModels: CustomModel[] = json ? JSON.parse(json) : []
-      const models = customModels.map(m => ({
-        id: m.id,
-        owned_by: 'local',
-        name: m.id,
-        size: 0,
-        modified: new Date(m.addedAt).toISOString(),
-      }))
+      const models = customModels
+        .filter(m => !m.filename?.toLowerCase().includes('mmproj'))
+        .map(m => ({
+          id: m.id,
+          owned_by: 'local',
+          name: m.id,
+          size: 0,
+          modified: new Date(m.addedAt).toISOString(),
+        }))
       const active = activeModelRef.current
       if (active && !models.find(m => m.id === active.name)) {
         models.push({
