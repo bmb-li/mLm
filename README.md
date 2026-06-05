@@ -1,6 +1,6 @@
 # mLm
 
-mLm 是一款基于 [llama.rn](https://github.com/mybigday/llama.rn) 构建的 Android 本地大语言模型推理应用。
+mLm 是一款基于 [llama.rn](https://github.com/mybigday/llama.rn) 构建的 Android 本地大模型推理应用。
 
 本项目基于 llama.rn 开发，在此基础上进行了 UI 重构并增加了 OpenAI 兼容的本地 API 服务。
 
@@ -40,4 +40,4 @@ cd android && ./gradlew assembleRelease
 
 - [llama.rn](https://github.com/mybigday/llama.rn) - React Native binding for llama.cpp
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) - LLM inference engine
-- [InferrLM](https://github.com/sbhjt-gr/InferrLM) - UI 布局灵感来源
+- [InferrLM](https://github.com/sbhjt-gr/InferrLM) - On-device AI for iOS & Android

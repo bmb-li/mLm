@@ -496,7 +496,18 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const msgs = messages.slice(0, userMsgIndex + 1)
       const allMessages = [
         { role: 'system' as const, content: DEFAULT_SYSTEM_PROMPT },
-        ...msgs.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ...msgs.map(m => {
+          if ((m as any).imageData) {
+            return {
+              role: m.role as 'user' | 'assistant',
+              content: [
+                { type: 'text', text: m.content || '' },
+                { type: 'image_url', image_url: { url: (m as any).imageData } },
+              ],
+            }
+          }
+          return { role: m.role as 'user' | 'assistant', content: m.content }
+        }),
       ]
 
       const params = completionParams || {}

@@ -215,6 +215,8 @@ export type TranslationStrings = {
     swaFullDesc: string
     parallel: string
     parallelDesc: string
+    imageMaxTokens: string
+    imageMaxTokensDesc: string
     valError: string
     valBetween: string
   }

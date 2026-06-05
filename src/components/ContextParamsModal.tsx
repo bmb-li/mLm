@@ -359,8 +359,8 @@ export default function ContextParamsModal({
 
       {/* Max Image Tokens */}
       <ParameterTextInput
-        label="Max Image Tokens (image_max_tokens)"
-        description="Limit tokens for dynamic resolution models (e.g., Qwen-VL). Lower values (256-512) improve speed, higher values preserve detail. Leave empty for model default."
+        label={t.params.imageMaxTokens}
+        description={t.params.imageMaxTokensDesc}
         value={params.image_max_tokens?.toString() || ''}
         onChangeText={(text) => {
           if (text === '') {

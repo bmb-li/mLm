@@ -215,6 +215,8 @@ const zh: TranslationStrings = {
     swaFullDesc: '使用完整大小的 SWA 缓存。多序列场景下可提高性能，但会占用更多内存。',
     parallel: '并行序列数 (n_parallel)',
     parallelDesc: '并行处理槽位数量。每个 slot 获取 1/n_parallel 的上下文。设为 1 可获得全量上下文。',
+    imageMaxTokens: '最大图像 Token 数 (image_max_tokens)',
+    imageMaxTokensDesc: '动态分辨率模型（如 Qwen-VL）的图像 Token 上限。较低的值（256-512）提升速度，较高的值保留更多细节。留空则使用模型默认值。',
     valError: '校验错误',
     valBetween: '{field} 必须在 {min} 和 {max} 之间',
   },

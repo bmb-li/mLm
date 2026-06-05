@@ -215,6 +215,8 @@ const en: TranslationStrings = {
     swaFullDesc: 'Use full-size SWA cache. May improve performance for multiple sequences but uses more memory.',
     parallel: 'Parallel Sequences (n_parallel)',
     parallelDesc: 'Number of parallel processing slots. Each slot gets 1/n_parallel of context. Set to 1 for full context per request.',
+    imageMaxTokens: 'Max Image Tokens (image_max_tokens)',
+    imageMaxTokensDesc: 'Limit tokens for dynamic resolution models (e.g., Qwen-VL). Lower values (256-512) improve speed, higher values preserve detail. Leave empty for model default.',
     valError: 'Validation Error',
     valBetween: '{field} must be between {min} and {max}',
   },
