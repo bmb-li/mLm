@@ -234,6 +234,7 @@ export default function ContextParamsModal({
       validateIntegerParam(params.n_batch, 1, 99999, t.params.batchSize),
       validateIntegerParam(params.n_ubatch, 1, 99999, t.params.uBatch),
       validateIntegerParam(params.n_parallel, 1, 16, t.params.parallel),
+      validateIntegerParam(params.image_max_tokens, 1, 99999, 'Max Image Tokens'),
       validateIntegerParam(params.n_threads, 1, 32, t.params.threads),
       validateIntegerParam(params.n_cpu_moe, 0, 99, t.params.cpuMoe),
     ]
@@ -272,6 +273,11 @@ export default function ContextParamsModal({
     if (typeof converted.n_parallel === 'string') {
       const num = parseInt(converted.n_parallel, 10)
       converted.n_parallel = Number.isNaN(num) ? undefined : num
+    }
+
+    if (typeof converted.image_max_tokens === 'string') {
+      const num = parseInt(converted.image_max_tokens, 10)
+      converted.image_max_tokens = Number.isNaN(num) ? undefined : num
     }
 
     if (typeof converted.n_threads === 'string') {
@@ -349,6 +355,23 @@ export default function ContextParamsModal({
         onChangeText={(text) => handleTextInput(text, 'n_parallel')}
         keyboardType="numeric"
         placeholder="1"
+      />
+
+      {/* Max Image Tokens */}
+      <ParameterTextInput
+        label="Max Image Tokens (image_max_tokens)"
+        description="Limit tokens for dynamic resolution models (e.g., Qwen-VL). Lower values (256-512) improve speed, higher values preserve detail. Leave empty for model default."
+        value={params.image_max_tokens?.toString() || ''}
+        onChangeText={(text) => {
+          if (text === '') {
+            updateParam('image_max_tokens', undefined)
+          } else {
+            const num = parseInt(text, 10)
+            updateParam('image_max_tokens', Number.isNaN(num) ? text : num)
+          }
+        }}
+        keyboardType="numeric"
+        placeholder="e.g. 512"
       />
 
       {/* Context Size */}

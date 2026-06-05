@@ -70,7 +70,14 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
 
       if (mmprojPath) {
         setInitProgress(85)
-        const success = await llamaContext.initMultimodal({ path: mmprojPath, use_gpu: true })
+        const imgMaxTokens = cp?.image_max_tokens
+          ? parseInt(String(cp.image_max_tokens), 10)
+          : undefined
+        const success = await llamaContext.initMultimodal({
+          path: mmprojPath,
+          use_gpu: true,
+          image_max_tokens: imgMaxTokens && !Number.isNaN(imgMaxTokens) ? imgMaxTokens : undefined,
+        })
         if (success) {
           setInitProgress(95)
           const support = await llamaContext.getMultimodalSupport()

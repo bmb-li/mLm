@@ -4,7 +4,7 @@ import type {
   CompletionParams as LlamaCompletionParams,
 } from '../../modules/llama.rn/src'
 
-export type ContextParams = Omit<LlamaContextParams, 'model'>
+export type ContextParams = Omit<LlamaContextParams, 'model'> & { image_max_tokens?: number }
 export type CompletionParams = Omit<LlamaCompletionParams, 'prompt'>
 
 export interface TTSParams {

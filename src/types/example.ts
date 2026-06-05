@@ -2,14 +2,12 @@ import type { ComponentType } from 'react'
 import type { LlamaContext } from '../../modules/llama.rn/src'
 
 export type ExampleRouteName =
-  | 'SimpleChat'
   | 'TextCompletion'
   | 'ParallelDecoding'
   | 'Multimodal'
   | 'ToolCalling'
   | 'Embeddings'
   | 'TTS'
-  | 'ModelInfo'
   | 'Bench'
   | 'StressTest'
 

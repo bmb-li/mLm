@@ -5,14 +5,12 @@ describe('example screen registry', () => {
     const routeNames = EXAMPLE_SCREEN_METADATA.map((screen) => screen.routeName)
     expect(new Set(routeNames).size).toBe(routeNames.length)
     expect(routeNames).toEqual([
-      'SimpleChat',
       'TextCompletion',
       'ParallelDecoding',
       'Multimodal',
       'ToolCalling',
       'Embeddings',
       'TTS',
-      'ModelInfo',
       'Bench',
       'StressTest',
     ])

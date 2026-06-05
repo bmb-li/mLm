@@ -11,14 +11,12 @@ export type TabParamList = {
 
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<TabParamList>
-  SimpleChat: undefined
   TextCompletion: undefined
   ParallelDecoding: undefined
   Multimodal: undefined
   ToolCalling: undefined
   Embeddings: undefined
   TTS: undefined
-  ModelInfo: undefined
   Bench: undefined
   StressTest: undefined
   ExamplesGallery: undefined

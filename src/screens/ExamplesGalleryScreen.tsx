@@ -22,14 +22,12 @@ interface DeviceInfoItem {
 }
 
 const EXAMPLE_SCREENS = [
-  { routeName: 'SimpleChat', labelKey: 'simpleChat', descKey: 'simpleChatDesc' as const },
   { routeName: 'Multimodal', labelKey: 'multimodal', descKey: 'multimodalDesc' as const },
   { routeName: 'TextCompletion', labelKey: 'textCompletion', descKey: 'textCompletionDesc' as const },
   { routeName: 'ToolCalling', labelKey: 'toolCalls', descKey: 'toolCallsDesc' as const },
   { routeName: 'ParallelDecoding', labelKey: 'parallelDecoding', descKey: 'parallelDecodingDesc' as const },
   { routeName: 'Embeddings', labelKey: 'embedding', descKey: 'embeddingDesc' as const },
   { routeName: 'TTS', labelKey: 'tts', descKey: 'ttsDesc' as const },
-  { routeName: 'ModelInfo', labelKey: 'modelInfo', descKey: 'modelInfoDesc' as const },
   { routeName: 'Bench', labelKey: 'bench', descKey: 'benchDesc' as const },
   { routeName: 'StressTest', labelKey: 'stressTest', descKey: 'stressTestDesc' as const },
 ]

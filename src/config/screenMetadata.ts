@@ -4,12 +4,6 @@ export const EXAMPLE_SCREEN_METADATA: Array<
   Omit<ExampleScreenDefinition, 'component'>
 > = [
   {
-    routeName: 'SimpleChat',
-    title: 'Simple Chat',
-    homeLabel: 'Simple Chat',
-    emoji: '💬',
-  },
-  {
     routeName: 'TextCompletion',
     title: 'Text Completion',
     homeLabel: 'Text Completion',
@@ -44,12 +38,6 @@ export const EXAMPLE_SCREEN_METADATA: Array<
     title: 'Text-to-Speech',
     homeLabel: 'Text-to-Speech (OuteTTS)',
     emoji: '🔊',
-  },
-  {
-    routeName: 'ModelInfo',
-    title: 'Model Info',
-    homeLabel: 'Model Info',
-    emoji: '📊',
   },
   {
     routeName: 'Bench',

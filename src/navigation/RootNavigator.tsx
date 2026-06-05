@@ -4,14 +4,12 @@ import MainTabNavigator from './MainTabNavigator'
 import ExamplesGalleryScreen from '../screens/ExamplesGalleryScreen'
 import ServerLogsScreen from '../screens/ServerLogsScreen'
 import APISetupScreen from '../screens/APISetupScreen'
-import SimpleChatScreen from '../screens/SimpleChatScreen'
 import MultimodalScreen from '../screens/MultimodalScreen'
 import TextCompletionScreen from '../screens/TextCompletionScreen'
 import ToolCallsScreen from '../screens/ToolCallsScreen'
 import ParallelDecodingScreen from '../screens/ParallelDecodingScreen'
 import EmbeddingScreen from '../screens/EmbeddingScreen'
 import TTSScreen from '../screens/TTSScreen'
-import ModelInfoScreen from '../screens/ModelInfoScreen'
 import BenchScreen from '../screens/BenchScreen'
 import StressTestScreen from '../screens/StressTestScreen'
 import type { RootStackParamList } from '../types/navigation'
@@ -49,11 +47,6 @@ export default function RootNavigator() {
         options={{ title: 'Example Demos' }}
       />
       <Stack.Screen
-        name="SimpleChat"
-        component={SimpleChatScreen}
-        options={{ title: 'Simple Chat' }}
-      />
-      <Stack.Screen
         name="Multimodal"
         component={MultimodalScreen}
         options={{ title: 'Multimodal' }}
@@ -82,11 +75,6 @@ export default function RootNavigator() {
         name="TTS"
         component={TTSScreen}
         options={{ title: 'Text to Speech' }}
-      />
-      <Stack.Screen
-        name="ModelInfo"
-        component={ModelInfoScreen}
-        options={{ title: 'Model Info' }}
       />
       <Stack.Screen
         name="Bench"
