@@ -18,6 +18,7 @@ import type { SearchResult, SearchEngine } from '../features/websearch/types'
 import SearchWebView from '../features/websearch/services/SearchWebView'
 import SearchResultModal from '../features/websearch/services/SearchResultModal'
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker'
+import ReactNativeBlobUtil from 'react-native-blob-util'
 import RNBlobUtil from 'react-native-blob-util'
 import Icon from '@react-native-vector-icons/material-design-icons'
 
@@ -28,6 +29,7 @@ interface ChatMessage {
   reasoningContent?: string
   searchResults?: SearchResult[]
   imageData?: string
+  audioData?: string
   timings?: any
 }
 
@@ -204,41 +206,126 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
   const handleStartRecording = useCallback(async () => {
     try {
-      setIsRecording(true)
-      const AudioRecord = require('react-native-audio-recorder').default || require('react-native-audio-recorder')
-      if (AudioRecord?.start) {
-        await AudioRecord.start()
-        recordingRef.current = { stop: async () => { await AudioRecord.stop(); return AudioRecord.getPath?.() || AudioRecord.getUri?.() || '' } }
+      if (Platform.OS === 'android') {
+        const PermissionsAndroid = require('react-native').PermissionsAndroid
+        const has = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
+        if (!has) {
+          const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
+          if (granted === 'never_ask_again') {
+            Alert.alert('需要麦克风权限', '请在系统设置中为 mLm 开启麦克风权限')
+            return
+          }
+          if (granted !== 'granted') { return }
+        }
       }
-    } catch {
+      const { AudioRecorder } = require('react-native-audio-api')
+      if (!AudioRecorder) return
+      const recorder = new AudioRecorder()
+      const chunks: Float32Array[] = []
+      recorder.onAudioReady({ sampleRate: 16000, bufferLength: 4096, channelCount: 1 }, (event: any) => {
+        if (event.buffer) {
+          try { chunks.push(event.buffer.getChannelData(0)) } catch {}
+        }
+      })
+      recorder.start()
+      setIsRecording(true)
+      recordingRef.current = {
+        stop: async () => {
+          recorder.stop()
+          if (chunks.length === 0) return ''
+          const totalLen = chunks.reduce((s, c) => s + c.length, 0)
+          const merged = new Float32Array(totalLen)
+          let offset = 0
+          for (const c of chunks) { merged.set(c, offset); offset += c.length }
+          chunks.length = 0
+          const pcm16 = new Int16Array(merged.length)
+          for (let i = 0; i < merged.length; i++) {
+            const s = Math.max(-1, Math.min(1, merged[i]))
+            pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+          }
+          const header = new ArrayBuffer(44)
+          const dv = new DataView(header)
+          const writeStr = (off: number, str: string) => { for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)) }
+          writeStr(0, 'RIFF')
+          dv.setUint32(4, 36 + pcm16.length * 2, true)
+          writeStr(8, 'WAVE')
+          writeStr(12, 'fmt ')
+          dv.setUint32(16, 16, true)
+          dv.setUint16(20, 1, true)
+          dv.setUint16(22, 1, true)
+          dv.setUint32(24, 16000, true)
+          dv.setUint32(28, 16000 * 2, true)
+          dv.setUint16(32, 2, true)
+          dv.setUint16(34, 16, true)
+          writeStr(36, 'data')
+          dv.setUint32(40, pcm16.length * 2, true)
+          const wav = new Uint8Array(header.byteLength + pcm16.length * 2)
+          wav.set(new Uint8Array(header), 0)
+          wav.set(new Uint8Array(pcm16.buffer), 44)
+          let binary = ''
+          const cs = 4096
+          for (let i = 0; i < wav.length; i += cs) {
+            const end = Math.min(i + cs, wav.length)
+            for (let j = i; j < end; j++) binary += String.fromCharCode(wav[j])
+          }
+          const b64 = btoa(binary)
+          const filePath = `${ReactNativeBlobUtil.fs.dirs.MusicDir}/mLm_rec_${Date.now()}.wav`
+          await ReactNativeBlobUtil.fs.writeFile(filePath, b64, 'base64')
+          return filePath
+        },
+      }
+    } catch (e) {
+      console.warn('[RECORD] handleStartRecording error:', e)
       setIsRecording(false)
     }
   }, [])
 
-  const handleStopRecording = useCallback(async () => {
-    if (!recordingRef.current) { setIsRecording(false); return }
-    setIsRecording(false)
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null)
+  const audioCtxRef = useRef<any>(null)
+
+  const handlePlayAudio = useCallback(async (id: string, filePath: string) => {
+    if (audioCtxRef.current) {
+      await audioCtxRef.current.close()
+      audioCtxRef.current = null
+    }
+    const { AudioContext } = require('react-native-audio-api')
+    const ctx = new AudioContext()
+    audioCtxRef.current = ctx
     try {
-      const audioPath = await recordingRef.current.stop()
-      recordingRef.current = null
-      if (!audioPath) { setIsVoiceMode(false); return }
-      const b64 = await RNBlobUtil.fs.readFile(audioPath.replace('file://', ''), 'base64')
-      const media = { type: 'audio' as const, data: `data:audio/wav;base64,${b64}`, mimeType: 'audio/wav' }
-      setPendingMedia(media)
-      setIsVoiceMode(false)
-    } catch { setIsVoiceMode(false) }
+      setPlayingAudioId(id)
+      const audioBuffer = await ctx.decodeAudioData('file://' + filePath)
+      if (!audioBuffer) { await ctx.close(); audioCtxRef.current = null; setPlayingAudioId(null); return }
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(ctx.destination)
+      source.start()
+      const timeout = setTimeout(() => {
+        ctx.close().then(() => { audioCtxRef.current = null })
+        setPlayingAudioId(null)
+      }, (audioBuffer.duration + 0.5) * 1000)
+      source.onended = () => {
+        clearTimeout(timeout)
+        ctx.close().then(() => { audioCtxRef.current = null })
+        setPlayingAudioId(null)
+      }
+    } catch {
+      await ctx.close()
+      audioCtxRef.current = null
+      setPlayingAudioId(null)
+    }
   }, [])
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (mediaOverride?: typeof pendingMedia) => {
     const text = inputText.trim()
-    if ((!text && !pendingMedia) || isStreaming) return
+    const media = mediaOverride || pendingMedia
+    if ((!text && !media) || isStreaming) return
 
     if (!context) {
       Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
       return
     }
 
-    const userMsg: ChatMessage = { id: `user_${Date.now()}`, role: 'user', content: pendingMedia ? (text || '查看附件') : text, imageData: pendingMedia?.type === 'image' ? pendingMedia.data : undefined }
+    const userMsg: ChatMessage = { id: `user_${Date.now()}`, role: 'user', content: media ? text : text, imageData: media?.type === 'image' ? media.data : undefined, audioData: media?.type === 'audio' ? media.data : undefined }
     const assistantId = `assistant_${Date.now()}`
     const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
 
@@ -248,13 +335,12 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
     // 构建多模态或纯文本消息
     let userContent: any
-    if (pendingMedia) {
-      userContent = [{ type: 'text', text: text || '描述一下这个' }]
-      if (pendingMedia.type === 'image') {
-        userContent.push({ type: 'image_url', image_url: { url: pendingMedia.data } })
-      } else if (pendingMedia.type === 'audio') {
-        const fmt = pendingMedia.mimeType?.includes('mp3') ? 'mp3' : 'wav'
-        userContent.push({ type: 'input_audio', input_audio: { format: fmt, data: pendingMedia.data.split(',')[1] || pendingMedia.data } })
+    if (media) {
+      userContent = text ? [{ type: 'text', text }] : []
+      if (media.type === 'image') {
+        userContent.push({ type: 'image_url', image_url: { url: media.data } })
+      } else if (media.type === 'audio') {
+        userContent.push({ type: 'input_audio', input_audio: { format: 'wav', url: `file://${media.data}` } })
       }
       setPendingMedia(null)
       processingImageRef.current = true
@@ -323,7 +409,18 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         : DEFAULT_SYSTEM_PROMPT
       const allMessages = [
         { role: 'system' as const, content: systemContent },
-        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ...messages.map(m => {
+          if ((m as any).audioData) {
+            return {
+              role: m.role as 'user' | 'assistant',
+              content: [
+                ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
+                { type: 'input_audio' as const, input_audio: { format: 'wav' as const, url: 'file://' + (m as any).audioData } },
+              ],
+            }
+          }
+          return { role: m.role as 'user' | 'assistant', content: m.content }
+        }),
         { role: 'user' as const, content: userContent || text },
       ]
 
@@ -357,11 +454,29 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         msg.id === assistantId ? { ...msg, content: finalContent, searchResults: searchHits || undefined, timings: completionResult.timings } : msg,
       ))
     } catch (error: any) {
-      Alert.alert(t.common.error, error.message)
+      if (error?.message?.toLowerCase().includes('model') || error?.message?.toLowerCase().includes('no model')) {
+        Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
+      } else {
+        Alert.alert(t.common.error, error?.message || '未知错误')
+      }
     } finally {
       setIsStreaming(false)
     }
   }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine])
+
+  const handleStopRecording = useCallback(async () => {
+    if (!recordingRef.current) { setIsRecording(false); return }
+    setIsRecording(false)
+    try {
+      const filePath = await recordingRef.current.stop()
+      recordingRef.current = null
+      if (!filePath) { setIsVoiceMode(false); return }
+      const media = { type: 'audio' as const, data: filePath, mimeType: 'audio/wav' }
+      handleSend(media)
+    } catch (e) {
+      console.warn('[RECORD] handleStopRecording error:', e)
+    }
+  }, [handleSend])
 
   const handleMetasoResults = useCallback(async (extractedText: string) => {
     setShowMetasoModal(false)
@@ -503,6 +618,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               content: [
                 { type: 'text', text: m.content || '' },
                 { type: 'image_url', image_url: { url: (m as any).imageData } },
+              ],
+            }
+          }
+          if ((m as any).audioData) {
+            return {
+              role: m.role as 'user' | 'assistant',
+              content: [
+                ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
+                { type: 'input_audio' as const, input_audio: { format: 'wav' as const, url: 'file://' + (m as any).audioData } },
               ],
             }
           }
@@ -659,9 +783,16 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               {item.imageData && (
                 <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
               )}
-              <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
-                {item.content || (isStreaming && !isUser ? (processingImageRef.current ? '⏳ ' + t.chat.processing : '...') : '')}
+              {item.audioData ? (
+                <TouchableOpacity onPress={() => handlePlayAudio(item.id, item.audioData!)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 24 }}>{playingAudioId === item.id ? '🔊' : '🔈'}</Text>
+                  <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 14 }}>{playingAudioId === item.id ? '播放中...' : '点击播放音频'}</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
+                  {item.content || (isStreaming && !isUser ? (processingImageRef.current ? '⏳ ' + t.chat.processing : '...') : '')}
               </Text>
+              )}
             </View>
           </>
         )}
@@ -814,19 +945,19 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
             {/* 第1行：编辑框 / 语音按钮 */}
             {isVoiceMode ? (
-              <TouchableOpacity
+              <Pressable
                 onPressIn={handleStartRecording}
                 onPressOut={handleStopRecording}
-                style={{
+                style={({ pressed }) => ({
                   margin: 8, paddingVertical: 16, borderRadius: 12,
-                  backgroundColor: isRecording ? colors.error + '20' : colors.inputBackground,
+                  backgroundColor: isRecording ? colors.error + '20' : (pressed ? colors.primary + '20' : colors.inputBackground),
                   alignItems: 'center',
-                }}
+                })}
               >
                 <Text style={{ color: isRecording ? colors.error : colors.text, fontSize: 16, fontWeight: '600' }}>
                   {isRecording ? t.chat.voiceRelease : t.chat.voiceTip}
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
             ) : (
               <TextInput
                 value={inputText}
@@ -866,7 +997,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               )}
 
               <TouchableOpacity
-                onPress={isStreaming ? handleStop : (inputText.trim() || pendingMedia ? handleSend : () => setIsVoiceMode(!isVoiceMode))}
+                onPress={isStreaming ? handleStop : (inputText.trim() || pendingMedia ? () => handleSend() : () => setIsVoiceMode(!isVoiceMode))}
                 style={{
                   marginLeft: 4, width: 44, height: 44, borderRadius: 22,
                   backgroundColor: isStreaming ? colors.error : (isVoiceMode ? colors.primary : (inputText.trim() || pendingMedia ? colors.primary : colors.disabled)),
