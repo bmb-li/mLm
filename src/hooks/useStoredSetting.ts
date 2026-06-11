@@ -6,11 +6,16 @@ import {
   loadCustomModels,
   loadMCPConfig,
   loadTTSParams,
+  loadTtsEngine,
+  loadTtsAutoSpeak,
+  loadTtsSpeed,
+  loadTtsVoice,
   type CompletionParams,
   type ContextParams,
   type CustomModel,
   type MCPConfig,
   type TTSParams,
+  type TtsEngine,
 } from '../utils/storage'
 
 interface UseStoredSettingOptions<T> {
@@ -95,4 +100,28 @@ export const useStoredMCPConfig = () =>
   useStoredSetting<MCPConfig>(loadMCPConfig, {
     initialValue: null,
     logLabel: 'MCP config',
+  })
+
+export const useTtsEngine = () =>
+  useStoredSetting<TtsEngine>(loadTtsEngine, {
+    initialValue: 'off',
+    logLabel: 'TTS engine',
+  })
+
+export const useTtsAutoSpeak = () =>
+  useStoredSetting<boolean>(loadTtsAutoSpeak, {
+    initialValue: false,
+    logLabel: 'TTS auto speak',
+  })
+
+export const useTtsSpeed = () =>
+  useStoredSetting<number>(loadTtsSpeed, {
+    initialValue: 1.0,
+    logLabel: 'TTS speed',
+  })
+
+export const useTtsVoice = () =>
+  useStoredSetting<string | null>(loadTtsVoice, {
+    initialValue: null,
+    logLabel: 'TTS voice',
   })

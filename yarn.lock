@@ -1256,6 +1256,11 @@
     "@jridgewell/resolve-uri" "^3.1.0"
     "@jridgewell/sourcemap-codec" "^1.4.14"
 
+"@mhpdev/react-native-speech@^1.4.1":
+  version "1.4.1"
+  resolved "https://registry.npmjs.org/@mhpdev/react-native-speech/-/react-native-speech-1.4.1.tgz"
+  integrity sha512-KYbHC8Aw/m9v5e3FMVV3mMVjRPLV/wRMtlscykTHIO6aYSwZ026+yqZ3JSjfvLLkpJZwWJ46cxrx9te2gqwoQw==
+
 "@modelcontextprotocol/sdk@^1.15.0", "@modelcontextprotocol/sdk@^1.17.5":
   version "1.17.5"
   resolved "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.17.5.tgz"

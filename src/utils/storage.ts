@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import RNBlobUtil from 'react-native-blob-util'
 import type {
   ContextParams as LlamaContextParams,
   CompletionParams as LlamaCompletionParams,
@@ -23,6 +24,9 @@ export interface CustomModel {
   mmprojLocalPath?: string
   visionEnabled?: boolean
   audioEnabled?: boolean
+  vocoderFilename?: string
+  vocoderLocalPath?: string
+  vocoderEnabled?: boolean
 }
 
 export interface MCPServer {
@@ -186,56 +190,82 @@ export const resetTTSParams = async (): Promise<void> => {
   }
 }
 
+const LLM_BASE = RNBlobUtil.fs.dirs.DocumentDir + '/LLMs'
+
+const ensureLLMDirs = async () => {
+  for (const dir of ['llm', 'mmproj', 'tts', 'wavtokenizer']) {
+    const p = `${LLM_BASE}/${dir}`
+    if (!(await RNBlobUtil.fs.exists(p))) {
+      await RNBlobUtil.fs.mkdir(p)
+    }
+  }
+}
+
 export const loadCustomModels = async (): Promise<CustomModel[]> => {
   try {
-    const jsonValue = await AsyncStorage.getItem(CUSTOM_MODELS_KEY)
-    if (jsonValue != null) {
-      return JSON.parse(jsonValue)
+    await ensureLLMDirs()
+    const models: CustomModel[] = []
+    const dirs = ['llm', 'mmproj', 'tts', 'wavtokenizer']
+    for (const dir of dirs) {
+      const dp = `${LLM_BASE}/${dir}`
+      if (await RNBlobUtil.fs.exists(dp)) {
+        const files = await RNBlobUtil.fs.ls(dp)
+        for (const f of files.filter((x: string) => x.endsWith('.gguf'))) {
+          models.push({
+            id: f.replace(/\.gguf$/i, ''),
+            repo: 'local',
+            filename: f,
+            quantization: 'Unknown',
+            addedAt: 0,
+            localPath: `file://${dp}/${f}`,
+          })
+        }
+      }
     }
-    return []
+    const assocs = await loadVocoderAssociations()
+    for (const model of models) {
+      const a = assocs[model.id]
+      if (a) {
+        ;(model as any).vocoderFilename = a.vocoderFilename
+        ;(model as any).vocoderLocalPath = a.vocoderLocalPath
+        ;(model as any).mmprojFilename = a.mmprojFilename
+        ;(model as any).mmprojLocalPath = a.mmprojLocalPath
+        ;(model as any).visionEnabled = a.visionEnabled
+        ;(model as any).audioEnabled = a.audioEnabled
+      }
+    }
+    return models
   } catch (error) {
     console.error('Error loading custom models:', error)
     return []
   }
 }
 
-// Storage functions for custom models
-export const saveCustomModel = async (model: CustomModel): Promise<void> => {
-  try {
-    const existingModels = await loadCustomModels()
-    const updatedModels = [
-      ...existingModels.filter((m) => m.id !== model.id),
-      model,
-    ]
-    const jsonValue = JSON.stringify(updatedModels)
-    await AsyncStorage.setItem(CUSTOM_MODELS_KEY, jsonValue)
-  } catch (error) {
-    console.error('Error saving custom model:', error)
-    throw error
-  }
-}
+export const saveCustomModel = async (_model: CustomModel): Promise<void> => {}
 
 export const deleteCustomModel = async (modelId: string): Promise<void> => {
   try {
-    const existingModels = await loadCustomModels()
-    const updatedModels = existingModels.filter((m) => m.id !== modelId)
-    const jsonValue = JSON.stringify(updatedModels)
-    await AsyncStorage.setItem(CUSTOM_MODELS_KEY, jsonValue)
+    const models = await loadCustomModels()
+    const model = models.find(m => m.id === modelId)
+    if (model?.localPath) {
+      const path = model.localPath.replace(/^file:\/\//, '')
+      if (await RNBlobUtil.fs.exists(path)) {
+        await RNBlobUtil.fs.unlink(path)
+      }
+    }
   } catch (error) {
-    console.error('Error deleting custom model:', error)
+    console.error('Error deleting model:', error)
     throw error
   }
 }
 
 export const updateCustomModel = async (modelId: string, changes: Partial<CustomModel>): Promise<void> => {
   try {
-    const models = await loadCustomModels()
-    const idx = models.findIndex(m => m.id === modelId)
-    if (idx === -1) throw new Error(`Model "${modelId}" not found`)
-    models[idx] = { ...models[idx], ...changes }
-    await AsyncStorage.setItem(CUSTOM_MODELS_KEY, JSON.stringify(models))
+    const existing = await loadVocoderAssociations()
+    existing[modelId] = { ...existing[modelId], ...changes }
+    await AsyncStorage.setItem('@llm_vocoder_assoc', JSON.stringify(existing))
   } catch (error) {
-    console.error('Error updating custom model:', error)
+    console.error('Error updating model:', error)
     throw error
   }
 }
@@ -250,6 +280,13 @@ export const getCustomModel = async (
     console.error('Error getting custom model:', error)
     return null
   }
+}
+
+export const loadVocoderAssociations = async (): Promise<Record<string, any>> => {
+  try {
+    const json = await AsyncStorage.getItem('@llm_vocoder_assoc')
+    return json ? JSON.parse(json) : {}
+  } catch { return {} }
 }
 
 // Storage functions for MCP configuration
@@ -285,4 +322,56 @@ export const resetMCPConfig = async (): Promise<void> => {
     console.error('Error resetting MCP config:', error)
     throw error
   }
+}
+
+// TTS settings
+const TTS_ENGINE_KEY = '@llm_tts_engine'
+const TTS_AUTO_SPEAK_KEY = '@llm_tts_auto_speak'
+const TTS_SPEED_KEY = '@llm_tts_speed'
+
+export type TtsEngine = 'off' | 'system' | 'model'
+
+export const loadTtsEngine = async (): Promise<TtsEngine> => {
+  try {
+    const v = await AsyncStorage.getItem(TTS_ENGINE_KEY)
+    if (v === 'system' || v === 'model') return v
+    return 'off'
+  } catch { return 'off' }
+}
+
+export const saveTtsEngine = async (v: TtsEngine): Promise<void> => {
+  await AsyncStorage.setItem(TTS_ENGINE_KEY, v)
+}
+
+export const loadTtsAutoSpeak = async (): Promise<boolean> => {
+  try {
+    return (await AsyncStorage.getItem(TTS_AUTO_SPEAK_KEY)) === 'true'
+  } catch { return false }
+}
+
+export const saveTtsAutoSpeak = async (v: boolean): Promise<void> => {
+  await AsyncStorage.setItem(TTS_AUTO_SPEAK_KEY, String(v))
+}
+
+export const loadTtsSpeed = async (): Promise<number> => {
+  try {
+    return parseFloat((await AsyncStorage.getItem(TTS_SPEED_KEY)) || '1.0')
+  } catch { return 1.0 }
+}
+
+export const saveTtsSpeed = async (v: number): Promise<void> => {
+  await AsyncStorage.setItem(TTS_SPEED_KEY, String(v))
+}
+
+const TTS_VOICE_KEY = '@llm_tts_voice'
+
+export const loadTtsVoice = async (): Promise<string | null> => {
+  try {
+    return await AsyncStorage.getItem(TTS_VOICE_KEY)
+  } catch { return null }
+}
+
+export const saveTtsVoice = async (v: string | null): Promise<void> => {
+  if (v) await AsyncStorage.setItem(TTS_VOICE_KEY, v)
+  else await AsyncStorage.removeItem(TTS_VOICE_KEY)
 }

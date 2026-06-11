@@ -17,11 +17,15 @@ interface ModelState {
   isLoading: boolean
   initProgress: number
   activeModelName: string | null
-  loadModel: (path: string, name: string, mmprojPath?: string) => Promise<LlamaContext>
+  loadModel: (path: string, name: string, mmprojPath?: string, vocoderPath?: string) => Promise<LlamaContext>
   unloadModel: () => Promise<void>
   clearCache: () => Promise<void>
   multimodalSupport: MultimodalSupport | null
   mmprojPath: string | null
+  vocoderReady: boolean
+  initVocoder: (path: string) => Promise<boolean>
+  releaseVocoder: () => Promise<void>
+  isVocoderEnabled: () => Promise<boolean>
 }
 
 const ModelContext = createContext<ModelState | null>(null)
@@ -34,8 +38,20 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   const [activeModelName, setActiveModelName] = useState<string | null>(null)
   const [multimodalSupport, setMultimodalSupport] = useState<MultimodalSupport | null>(null)
   const [mmprojPath, setMmprojPath] = useState<string | null>(null)
+  const [vocoderReady, setVocoderReady] = useState(false)
   const contextRef = useRef<LlamaContext | null>(null)
   const mmprojPathRef = useRef<string | null>(null)
+  const writeLogRef = useRef<(tag: string, msg: string) => Promise<void>>(undefined as any)
+
+  writeLogRef.current = async (tag: string, msg: string) => {
+    try {
+      const RNBlobUtil = require('react-native-blob-util').default || require('react-native-blob-util')
+      const p = RNBlobUtil.fs.dirs.CacheDir + '/mlm_debug.log'
+      const entry = `[${new Date().toISOString().slice(11,19)}] [${tag}] ${msg}\n`
+      const prev = (await RNBlobUtil.fs.exists(p)) ? await RNBlobUtil.fs.readFile(p, 'utf8') : ''
+      await RNBlobUtil.fs.writeFile(p, (prev + entry).slice(-10000), 'utf8')
+    } catch {}
+  }
 
   useEffect(() => {
     contextRef.current = context
@@ -47,12 +63,13 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const loadModel = useCallback(async (path: string, name: string, mmprojPath?: string): Promise<LlamaContext> => {
+  const loadModel = useCallback(async (path: string, name: string, mmprojPath?: string, vocoderPath?: string): Promise<LlamaContext> => {
     try {
       setIsLoading(true)
       setInitProgress(0)
       setMultimodalSupport(null)
       setMmprojPath(null)
+      setVocoderReady(false)
       mmprojPathRef.current = null
 
       const cp: ContextParams | null = await loadContextParams()
@@ -66,7 +83,9 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
         await contextRef.current.release()
       }
 
+      writeLogRef.current?.('MODEL', 'parallel.enable start')
       await llamaContext.parallel.enable({ n_parallel: nSlots, n_batch: 512 })
+      writeLogRef.current?.('MODEL', 'parallel.enable done')
 
       if (mmprojPath) {
         setInitProgress(85)
@@ -85,6 +104,13 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
           setMmprojPath(mmprojPath)
           mmprojPathRef.current = mmprojPath
         }
+      }
+
+      if (vocoderPath) {
+        writeLogRef.current?.('MODEL', 'initVocoder start')
+        const vocoderOk = await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256 })
+        writeLogRef.current?.('MODEL', `initVocoder done: ${vocoderOk}`)
+        setVocoderReady(vocoderOk)
       }
 
       contextRef.current = llamaContext
@@ -112,12 +138,14 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     setActiveModelName(null)
     setMultimodalSupport(null)
     setMmprojPath(null)
+    setVocoderReady(false)
     mmprojPathRef.current = null
     await AsyncStorage.removeItem(ACTIVE_MODEL_KEY)
     if (current) {
       if (mmprojPathRef.current) {
         await current.releaseMultimodal()
       }
+      await current.releaseVocoder()
       await current.release()
     }
   }, [])
@@ -128,11 +156,35 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  const initVocoder = useCallback(async (path: string): Promise<boolean> => {
+    if (!contextRef.current) return false
+    try {
+      const ok = await contextRef.current.initVocoder({ path, n_batch: 256 })
+      setVocoderReady(ok)
+      return ok
+    } catch {
+      setVocoderReady(false)
+      return false
+    }
+  }, [])
+
+  const releaseVocoder = useCallback(async () => {
+    if (contextRef.current) {
+      await contextRef.current.releaseVocoder()
+    }
+    setVocoderReady(false)
+  }, [])
+
+  const isVocoderEnabled = useCallback(async (): Promise<boolean> => {
+    if (!contextRef.current) return false
+    return await contextRef.current.isVocoderEnabled()
+  }, [])
+
   return (
     <ModelContext.Provider value={{
       context, isModelReady, isLoading, initProgress, activeModelName,
       loadModel, unloadModel, clearCache,
-      multimodalSupport, mmprojPath,
+      multimodalSupport, mmprojPath, vocoderReady, initVocoder, releaseVocoder, isVocoderEnabled,
     }}>
       {children}
     </ModelContext.Provider>

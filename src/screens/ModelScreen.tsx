@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, Clipboard, TextInput, Switch, ActivityIndicator, FlatList } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, Clipboard, TextInput, Switch, ActivityIndicator, FlatList, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useNavigation } from '@react-navigation/native'
 import RNBlobUtil from 'react-native-blob-util'
@@ -12,6 +12,10 @@ import { loadLlamaModelInfo } from '../../modules/llama.rn/src'
 import { useModelContext } from '../contexts/ModelContext'
 import { loadContextParams, saveContextParams, saveCustomModel, deleteCustomModel, updateCustomModel, type ContextParams, type CustomModel } from '../utils/storage'
 import { useStoredCustomModels } from '../hooks/useStoredSetting'
+import { ModelDownloader } from '../services/ModelDownloader'
+import { getModelDownloadUrl } from '../utils/constants'
+
+const downloader = new ModelDownloader()
 
 function fmt(v: any): string {
   if (v === null || v === undefined) return 'N/A'
@@ -33,9 +37,10 @@ export default function ModelScreen() {
   const [renameVis, setRenameVis] = useState(false)
   const [renameModel, setRenameModel] = useState<CustomModel | null>(null)
   const [renameText, setRenameText] = useState('')
-  const [activeTab, setActiveTab] = useState<'available' | 'mmproj'>('available')
+  const [activeTab, setActiveTab] = useState<'available' | 'mmproj' | 'tts' | 'wavtokenizer'>('available')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [mmprojPickerTarget, setMmprojPickerTarget] = useState<string | null>(null)
+  const [vocoderPickerTarget, setVocoderPickerTarget] = useState<string | null>(null)
   const [importingFor, setImportingFor] = useState<string | null>(null)
 
   const { isModelReady, isLoading, initProgress, activeModelName, loadModel, unloadModel } = useModelContext()
@@ -47,23 +52,41 @@ export default function ModelScreen() {
 
   const filteredModels = useMemo(() => {
     return (customModels || []).filter(m => {
-      const isMmproj = (m.filename || '').toLowerCase().includes('mmproj')
-      if (activeTab === 'available') return !isMmproj
-      return isMmproj
+      const p = m.localPath || ''
+      if (activeTab === 'available') return p.includes('/llm/')
+      if (activeTab === 'mmproj') return p.includes('/mmproj/')
+      if (activeTab === 'tts') return p.includes('/tts/')
+      if (activeTab === 'wavtokenizer') return p.includes('/wavtokenizer/')
+      return false
     })
   }, [customModels, activeTab])
 
   const availableMmprojFiles = useMemo(() => {
     const seen = new Set<string>()
     return (customModels || []).reduce<{ label: string; path: string }[]>((acc, m) => {
-      const isMmproj = (m.filename || '').toLowerCase().includes('mmproj')
-      const filePath = m.mmprojLocalPath || m.localPath || ''
-      if (isMmproj && filePath && !seen.has(filePath)) {
-        seen.add(filePath)
-        acc.push({ label: m.id, path: filePath })
+      const p = m.localPath || ''
+      if (p.includes('/mmproj/') && !seen.has(p)) {
+        seen.add(p)
+        acc.push({ label: m.id, path: p })
       }
       return acc
     }, [])
+  }, [customModels])
+
+  const availableVocoderFiles = useMemo(() => {
+    const vocoderPath = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/wavtokenizer`
+    const files: { label: string; path: string }[] = []
+    // Can't read filesystem synchronously in useMemo, fall back to customModels
+    if (!customModels) return files
+    const seen = new Set<string>()
+    for (const m of customModels) {
+      const p = m.localPath || ''
+      if (p.includes('/wavtokenizer/') && !seen.has(p)) {
+        seen.add(p)
+        files.push({ label: m.id, path: p })
+      }
+    }
+    return files
   }, [customModels])
 
   const updateModel = useCallback(async (model: CustomModel, changes: Partial<CustomModel>) => {
@@ -89,13 +112,17 @@ export default function ModelScreen() {
         Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
         return
       }
-      await updateModel(model, { mmprojFilename: file.name, mmprojLocalPath: localCopy.localUri })
+      const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/mmproj`
+      if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
+      await RNBlobUtil.fs.mv(localCopy.localUri.replace(/^file:\/\//, ''), `${destDir}/${file.name}`)
+      await updateModel(model, { mmprojFilename: file.name, mmprojLocalPath: `file://${destDir}/${file.name}` })
+      await reloadCustomModels()
     } catch (e: any) {
       if (e?.code !== 'DOCUMENT_PICKER_CANCELED') Alert.alert(t.common.error, e.message)
     } finally {
       setImportingFor(null)
     }
-  }, [updateModel, t])
+  }, [updateModel, t, reloadCustomModels])
 
   const handleRemoveMmproj = useCallback(async (model: CustomModel) => {
     await updateModel(model, { mmprojFilename: undefined, mmprojLocalPath: undefined })
@@ -109,6 +136,48 @@ export default function ModelScreen() {
     await updateModel(model, { audioEnabled: value })
   }, [updateModel])
 
+  const handleImportVocoder = useCallback(async (model: CustomModel) => {
+    try {
+      setImportingFor(model.id)
+      const { pick, keepLocalCopy } = require('@react-native-documents/picker')
+      const [file] = await pick({ type: ['*/*'] })
+      if (!file?.uri || !file?.name) return
+      if (!file.name.toLowerCase().endsWith('.gguf')) {
+        Alert.alert('Invalid File', 'Please select a GGUF file')
+        return
+      }
+      const [localCopy] = await keepLocalCopy({
+        files: [{ uri: file.uri, fileName: file.name }],
+        destination: 'documentDirectory',
+      })
+      if (localCopy.status !== 'success') {
+        Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
+        return
+      }
+      const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/wavtokenizer`
+      if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
+      await RNBlobUtil.fs.mv(localCopy.localUri.replace(/^file:\/\//, ''), `${destDir}/${file.name}`)
+      await updateModel(model, { vocoderFilename: file.name, vocoderLocalPath: `file://${destDir}/${file.name}` })
+      await reloadCustomModels()
+    } catch (e: any) {
+      if (e?.code !== 'DOCUMENT_PICKER_CANCELED') Alert.alert(t.common.error, e.message)
+    } finally {
+      setImportingFor(null)
+    }
+  }, [updateModel, t, reloadCustomModels])
+
+  const handleRemoveVocoder = useCallback(async (model: CustomModel) => {
+    await updateModel(model, { vocoderFilename: undefined, vocoderLocalPath: undefined })
+  }, [updateModel])
+
+  const handleVocoderSelect = useCallback(async (targetId: string, path: string, label: string) => {
+    const model = (customModels || []).find(m => m.id === targetId)
+    if (model) {
+      await updateModel(model, { vocoderFilename: label, vocoderLocalPath: path })
+    }
+    setVocoderPickerTarget(null)
+  }, [customModels, updateModel])
+
   const handleMmprojSelect = useCallback(async (targetId: string, path: string, label: string) => {
     const model = (customModels || []).find(m => m.id === targetId)
     if (model) {
@@ -117,9 +186,9 @@ export default function ModelScreen() {
     setMmprojPickerTarget(null)
   }, [customModels, updateModel])
 
-  const handleLoadModel = async (path: string, name: string, mmprojPath?: string) => {
+  const handleLoadModel = async (path: string, name: string, mmprojPath?: string, vocoderPath?: string) => {
     try {
-      await loadModel(path, name, mmprojPath)
+      await loadModel(path, name, mmprojPath, vocoderPath)
       ;(navigation as any).navigate('HomeTab')
     } catch (error: any) {
       Alert.alert(t.common.error, error.message)
@@ -134,42 +203,6 @@ export default function ModelScreen() {
       setInfoTitle(n); setInfoItems(items); setInfoVis(true)
     } catch (e: any) { Alert.alert(t.common.error, e.message) }
   }, [t])
-
-  const handleImportFile = async () => {
-    try {
-      const { pick, keepLocalCopy } = require('@react-native-documents/picker')
-      const [file] = await pick({ type: ['*/*'] })
-      if (!file?.uri || !file?.name) return
-      if (!file.name.toLowerCase().endsWith('.gguf')) {
-        Alert.alert('Invalid File', 'Please select a GGUF model file (.gguf extension)')
-        return
-      }
-      const [localCopy] = await keepLocalCopy({
-        files: [{ uri: file.uri, fileName: file.name }],
-        destination: 'documentDirectory',
-      })
-      if (localCopy.status !== 'success') {
-        Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
-        return
-      }
-      const modelName = file.name.replace(/\.gguf$/i, '')
-      const customModel: CustomModel = {
-        id: modelName,
-        repo: 'local-file',
-        filename: file.name,
-        quantization: 'Unknown',
-        addedAt: Date.now(),
-        localPath: localCopy.localUri,
-      }
-      await saveCustomModel(customModel)
-      await reloadCustomModels()
-      Alert.alert(t.common.success, 'Model imported successfully!')
-    } catch (e: any) {
-      if (e?.code !== 'DOCUMENT_PICKER_CANCELED') {
-        Alert.alert(t.common.error, e.message)
-      }
-    }
-  }
 
   const handleDelete = useCallback(async (model: CustomModel) => {
     Alert.alert(
@@ -188,7 +221,6 @@ export default function ModelScreen() {
                   await RNBlobUtil.fs.unlink(cleanPath)
                 }
               }
-              await deleteCustomModel(model.id)
               await reloadCustomModels()
             } catch (e: any) {
               Alert.alert(t.common.error, e.message)
@@ -210,9 +242,14 @@ export default function ModelScreen() {
     const newId = renameText.trim()
     if (newId === renameModel.id) { setRenameVis(false); return }
     try {
-      const updated: CustomModel = { ...renameModel, id: newId }
-      await deleteCustomModel(renameModel.id)
-      await saveCustomModel(updated)
+      const oldPath = renameModel.localPath?.replace(/^file:\/\//, '')
+      if (oldPath) {
+        const dir = oldPath.substring(0, oldPath.lastIndexOf('/'))
+        const newPath = `${dir}/${newId}.gguf`
+        if (await RNBlobUtil.fs.exists(oldPath)) {
+          await RNBlobUtil.fs.mv(oldPath, newPath)
+        }
+      }
       await reloadCustomModels()
       setRenameVis(false)
     } catch (e: any) {
@@ -221,6 +258,83 @@ export default function ModelScreen() {
   }
 
   const activeModel = (customModels || []).find(m => m.id === activeModelName)
+
+  // TTS 下载状态
+  const [ttsDownloading, setTtsDownloading] = useState(false)
+  const [ttsDownloadProgress, setTtsDownloadProgress] = useState(0)
+  const [ttsDownloadStatus, setTtsDownloadStatus] = useState('')
+  const ttsModelRepo = 'OuteAI/OuteTTS-0.3-500M-GGUF'
+  const ttsModelFile = 'OuteTTS-0.3-500M-Q4_K_M.gguf'
+  const ttsVocoderRepo = 'ggml-org/WavTokenizer'
+  const ttsVocoderFile = 'WavTokenizer-Large-75-Q5_1.gguf'
+
+  const handleTtsDownloadLocal = useCallback(async () => {
+    try {
+      setTtsDownloading(true)
+      setTtsDownloadProgress(0)
+      setTtsDownloadStatus(t.models.ttsModel + '...')
+      const ttsPath = await downloader.downloadModel(ttsModelRepo, ttsModelFile, (p) => {
+        setTtsDownloadProgress(Math.round(p.percentage / 2))
+        setTtsDownloadStatus(`${t.models.ttsModel}: ${p.percentage}%`)
+      })
+      setTtsDownloadStatus(t.models.selectVocoder + '...')
+      const vocoderPath = await downloader.downloadModel(ttsVocoderRepo, ttsVocoderFile, (p) => {
+        setTtsDownloadProgress(50 + Math.round(p.percentage / 2))
+        setTtsDownloadStatus(`Vocoder: ${p.percentage}%`)
+      })
+      setTtsDownloadProgress(100)
+      setTtsDownloadStatus(t.common.success)
+      const newModel: CustomModel = {
+        id: 'OuteTTS-0.3-500M',
+        repo: ttsModelRepo,
+        filename: ttsModelFile,
+        quantization: 'Q4_K_M',
+        addedAt: Date.now(),
+        localPath: ttsPath,
+        vocoderFilename: ttsVocoderFile,
+        vocoderLocalPath: vocoderPath,
+      }
+      await saveCustomModel(newModel)
+      await reloadCustomModels()
+      Alert.alert(t.common.success, 'TTS model downloaded successfully!')
+    } catch (e: any) {
+      Alert.alert(t.common.error, e.message)
+    } finally {
+      setTtsDownloading(false)
+      setTtsDownloadProgress(0)
+      setTtsDownloadStatus('')
+    }
+  }, [t, reloadCustomModels])
+
+  const handleTtsDownloadBrowser = useCallback(() => {
+    Linking.openURL(getModelDownloadUrl(ttsModelRepo, ttsModelFile))
+    setTimeout(() => Linking.openURL(getModelDownloadUrl(ttsVocoderRepo, ttsVocoderFile)), 800)
+  }, [])
+
+  const handleImportModel = useCallback(async () => {
+    try {
+      const { pick, keepLocalCopy } = require('@react-native-documents/picker')
+      const [file] = await pick({ type: ['*/*'] })
+      if (!file?.uri || !file?.name) return
+      if (!file.name.toLowerCase().endsWith('.gguf')) {
+        Alert.alert('Invalid File', 'Please select a GGUF model file')
+        return
+      }
+      const [local] = await keepLocalCopy({
+        files: [{ uri: file.uri, fileName: file.name }],
+        destination: 'documentDirectory',
+      })
+      if (local.status !== 'success') throw new Error(local.copyError)
+      const dirMap: Record<string, string> = { available: 'llm', mmproj: 'mmproj', tts: 'tts', wavtokenizer: 'wavtokenizer' }
+      const subDir = dirMap[activeTab] || 'llm'
+      const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/${subDir}`
+      if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
+      await RNBlobUtil.fs.mv(local.localUri.replace(/^file:\/\//, ''), `${destDir}/${file.name}`)
+      await reloadCustomModels()
+    } catch (e: any) {
+      if (e?.code !== 'DOCUMENT_PICKER_CANCELED') Alert.alert(t.common.error, e.message)
+    }
+  }, [reloadCustomModels, activeTab])
 
   return (
     <SafeAreaView style={[s.container, { backgroundColor: c.background }]} edges={['left', 'right']}>
@@ -256,6 +370,8 @@ export default function ModelScreen() {
           {[
             { key: 'available' as const, label: t.models.tabText },
             { key: 'mmproj' as const, label: t.models.tabMmproj },
+            { key: 'tts' as const, label: t.models.tabTts },
+            { key: 'wavtokenizer' as const, label: (t.models as any).tabWavtokenizer || 'Vocoder' },
           ].map(tab => (
             <TouchableOpacity
               key={tab.key}
@@ -289,7 +405,7 @@ export default function ModelScreen() {
                 <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary }]} onPress={() => handleRenameOpen(model)}>
                   <Text style={[s.btnTxt, { color: c.textSecondary }]}>{t.models.rename}</Text>
                 </TouchableOpacity>
-                {activeTab !== 'mmproj' && (
+                {activeTab !== 'mmproj' && activeTab !== 'wavtokenizer' && (
                   isActive ? (
                     <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={unloadModel}>
                       <Text style={[s.btnTxt, { color: c.error }]}>{t.models.unload}</Text>
@@ -297,7 +413,7 @@ export default function ModelScreen() {
                   ) : (
                     <TouchableOpacity
                       style={[s.btn, { borderColor: c.primary }]}
-                      onPress={() => handleLoadModel(model.localPath || '', model.id, model.mmprojLocalPath)}
+                      onPress={() => handleLoadModel(model.localPath || '', model.id, model.mmprojLocalPath, (model as any).vocoderLocalPath)}
                       disabled={isLoading}
                     >
                       <Text style={[s.btnTxt, { color: c.primary }]}>{t.models.load}</Text>
@@ -307,7 +423,7 @@ export default function ModelScreen() {
                 <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={() => handleDelete(model)}>
                   <Text style={[s.btnTxt, { color: c.error }]}>{t.models.delete}</Text>
                 </TouchableOpacity>
-                {activeTab !== 'mmproj' && (
+                {activeTab !== 'mmproj' && activeTab !== 'wavtokenizer' && (
                   <TouchableOpacity onPress={() => setExpandedId(isExpanded ? null : model.id)} style={{ marginLeft: 'auto', paddingHorizontal: 4 }}>
                     <Text style={{ color: c.textSecondary, fontSize: 14 }}>{isExpanded ? '▲' : '▼'}</Text>
                   </TouchableOpacity>
@@ -316,45 +432,97 @@ export default function ModelScreen() {
 
               {isExpanded && (
                 <View style={{ marginTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border, paddingTop: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <TouchableOpacity
-                      style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
-                      onPress={() => setMmprojPickerTarget(model.id)}
-                    >
-                      <Text style={{ color: model.mmprojFilename ? c.text : c.textSecondary, fontSize: 14 }}>
-                        {model.mmprojFilename || t.models.mmprojSelect}
-                      </Text>
-                      <Text style={{ color: c.textSecondary }}>›</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: model.mmprojLocalPath ? c.error : c.primary }}
-                      onPress={model.mmprojLocalPath ? () => handleRemoveMmproj(model) : () => handleImportMmproj(model)}
-                      disabled={importingFor === model.id}
-                    >
-                      <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
-                        {importingFor === model.id ? '...' : model.mmprojLocalPath ? t.models.removeMmproj : t.models.importMmproj}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Switch value={model.visionEnabled || false} onValueChange={v => handleToggleVision(model, v)} />
-                      <Text style={{ color: c.text, fontSize: 14 }}>{t.models.vision}</Text>
+                  {activeTab === 'tts' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <TouchableOpacity
+                        style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                        onPress={() => setVocoderPickerTarget(model.id)}
+                      >
+                        <Text style={{ color: (model as any).vocoderFilename ? c.text : c.textSecondary, fontSize: 14 }}>
+                          {(model as any).vocoderFilename || t.models.selectVocoder}
+                        </Text>
+                        <Text style={{ color: c.textSecondary }}>›</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: (model as any).vocoderLocalPath ? c.error : c.primary }}
+                        onPress={(model as any).vocoderLocalPath ? () => handleRemoveVocoder(model) : () => handleImportVocoder(model)}
+                        disabled={importingFor === model.id}
+                      >
+                        <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                          {importingFor === model.id ? '...' : (model as any).vocoderLocalPath ? t.models.removeVocoder : t.models.importVocoder}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <Switch value={model.audioEnabled || false} onValueChange={v => handleToggleAudio(model, v)} />
-                      <Text style={{ color: c.text, fontSize: 14 }}>{t.models.audio}</Text>
-                    </View>
-                  </View>
+                  ) : (
+                    <>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                          onPress={() => setMmprojPickerTarget(model.id)}
+                        >
+                          <Text style={{ color: model.mmprojFilename ? c.text : c.textSecondary, fontSize: 14 }}>
+                            {model.mmprojFilename || t.models.mmprojSelect}
+                          </Text>
+                          <Text style={{ color: c.textSecondary }}>›</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: model.mmprojLocalPath ? c.error : c.primary }}
+                          onPress={model.mmprojLocalPath ? () => handleRemoveMmproj(model) : () => handleImportMmproj(model)}
+                          disabled={importingFor === model.id}
+                        >
+                          <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                            {importingFor === model.id ? '...' : model.mmprojLocalPath ? t.models.removeMmproj : t.models.importMmproj}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Switch value={model.visionEnabled || false} onValueChange={v => handleToggleVision(model, v)} />
+                          <Text style={{ color: c.text, fontSize: 14 }}>{t.models.vision}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Switch value={model.audioEnabled || false} onValueChange={v => handleToggleAudio(model, v)} />
+                          <Text style={{ color: c.text, fontSize: 14 }}>{t.models.audio}</Text>
+                        </View>
+                      </View>
+                    </>
+                  )}
                 </View>
               )}
             </View>
           )
         })}
 
-        <TouchableOpacity style={[s.importBtn, { backgroundColor: c.primary }]} onPress={handleImportFile}>
-          <Text style={s.importBtnTxt}>+ {t.models.importModel}</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity style={[s.importBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={handleImportModel}>
+            <Text style={s.importBtnTxt}>📁 {t.models.importModel}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.importBtn, { backgroundColor: c.primary, flex: 1 }]} onPress={() => Linking.openURL('https://huggingface.co/models?sort=created&search=gguf')}>
+            <Text style={s.importBtnTxt}>{(t.models as any).goHuggingFace || '🌐 HuggingFace'}</Text>
+          </TouchableOpacity>
+        </View>
+        {activeTab === 'tts' && !ttsDownloading && (
+          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+            <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 OuteTTS 0.3 500M + WavTokenizer</Text>
+            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>454MB + 70MB</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={handleTtsDownloadLocal}>
+                <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ {t.models.ttsModel}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]} onPress={handleTtsDownloadBrowser}>
+                <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+        {activeTab === 'tts' && ttsDownloading && (
+          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.primary }]}>
+            <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{ttsDownloadStatus}</Text>
+            <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border }}>
+              <View style={{ width: `${ttsDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <ContextParamsModal visible={showCtx} onClose={() => setShowCtx(false)} onSave={(p) => { setCtxParams(p); saveContextParams(p) }} />
@@ -445,7 +613,37 @@ export default function ModelScreen() {
                     onPress={() => handleMmprojSelect(mmprojPickerTarget!, item.path, item.label)}
                   >
                     <Text style={{ color: c.text, fontSize: 15 }}>{item.label}</Text>
-                    <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 2 }} numberOfLines={1}>{item.path}</Text>
+                  </TouchableOpacity>
+                )}
+                style={{ maxHeight: 300 }}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Vocoder 选择器 */}
+      <Modal visible={vocoderPickerTarget !== null} transparent animationType="fade" onRequestClose={() => setVocoderPickerTarget(null)}>
+        <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setVocoderPickerTarget(null)}>
+          <View style={[s.modal, { backgroundColor: c.surface }]}>
+            <View style={[s.modalHdr, { borderBottomColor: c.border }]}>
+              <Text style={[s.modalTtl, { color: c.text }]}>{t.models.selectVocoder}</Text>
+              <TouchableOpacity onPress={() => setVocoderPickerTarget(null)}>
+                <Text style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>{t.common.close}</Text>
+              </TouchableOpacity>
+            </View>
+            {availableVocoderFiles.length === 0 ? (
+              <Text style={{ color: c.textSecondary, textAlign: 'center', padding: 20 }}>{t.models.noVocoder}</Text>
+            ) : (
+              <FlatList
+                data={availableVocoderFiles}
+                keyExtractor={item => item.path}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{ paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border }}
+                    onPress={() => handleVocoderSelect(vocoderPickerTarget!, item.path, item.label)}
+                  >
+                    <Text style={{ color: c.text, fontSize: 15 }}>{item.label}</Text>
                   </TouchableOpacity>
                 )}
                 style={{ maxHeight: 300 }}

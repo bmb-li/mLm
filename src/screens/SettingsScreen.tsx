@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, StyleSheet, Linking } from 'react-native'
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, StyleSheet, Linking, Switch, Alert, Modal, FlatList } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -10,6 +10,9 @@ import { BuildInfo, getBackendDevicesInfo } from '../../modules/llama.rn/src'
 import { loadSearchEngine, saveSearchEngine, loadTavilyApiKey, saveTavilyApiKey } from '../features/websearch/utils/searchStorage'
 import { getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
 import type { SearchEngine } from '../features/websearch/types'
+import { useTtsEngine, useTtsAutoSpeak, useTtsSpeed, useTtsVoice } from '../hooks/useStoredSetting'
+import { saveTtsEngine, saveTtsAutoSpeak, saveTtsSpeed, saveTtsVoice } from '../utils/storage'
+import Speech from '@mhpdev/react-native-speech'
 
 export default function SettingsScreen({ navigation }: { navigation: any }) {
   const { theme, themeMode, setThemeMode } = useTheme()
@@ -31,6 +34,14 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [showTavilyInput, setShowTavilyInput] = useState(false)
   const [tavilyApiKey, setTavilyApiKey] = useState('')
+  const { value: ttsEngine, reload: reloadTtsEngine } = useTtsEngine()
+  const { value: ttsAutoSpeak, reload: reloadTtsAutoSpeak } = useTtsAutoSpeak()
+  const { value: ttsSpeed, reload: reloadTtsSpeed } = useTtsSpeed()
+  const { value: ttsVoice, reload: reloadTtsVoice } = useTtsVoice()
+  const [voiceList, setVoiceList] = useState<{ id: string; name: string }[]>([])
+  const [showVoicePicker, setShowVoicePicker] = useState(false)
+  const [ttsTestStatus, setTtsTestStatus] = useState<string | null>(null)
+  const [ttsExpanded, setTtsExpanded] = useState(false)
 
   useEffect(() => {
     loadSearchEngine().then(setSearchEngine)
@@ -222,6 +233,132 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
           )}
         </SettingsSection>
 
+        <SettingsSection title={t.tts.title}>
+          <TouchableOpacity onPress={() => setTtsExpanded(!ttsExpanded)} style={styles.settingItem}>
+            <View style={styles.settingLeft}>
+              <View style={[styles.iconContainer, { backgroundColor: colors.card }]}>
+                <Text style={{ fontSize: 22 }}>🔊</Text>
+              </View>
+              <View style={styles.settingTextContainer}>
+                <Text style={[styles.settingText, { color: colors.text }]}>
+                  {ttsEngine === 'system' ? t.tts.systemEngine : ttsEngine === 'model' ? t.tts.modelEngine : t.tts.off}
+                </Text>
+              </View>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: 18, transform: [{ rotate: ttsExpanded ? '90deg' : '0deg' }] }}>›</Text>
+          </TouchableOpacity>
+
+          {ttsExpanded && (<>
+            <View style={styles.optionRow}>
+              {[
+                { value: 'off' as const, label: t.tts.off },
+                { value: 'system' as const, label: t.tts.systemEngine },
+                { value: 'model' as const, label: t.tts.modelEngine },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[styles.optionChip, { backgroundColor: ttsEngine === opt.value ? colors.primary : colors.card, borderColor: colors.border }]}
+                  onPress={() => { saveTtsEngine(opt.value); reloadTtsEngine() }}
+                >
+                  <Text style={{ color: ttsEngine === opt.value ? '#FFF' : colors.text, fontSize: 13, fontWeight: '600' }}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {ttsEngine === 'system' && (<>
+              <View style={styles.settingItem}>
+                <View style={styles.settingLeft}>
+                  <Text style={[styles.settingText, { color: colors.text }]}>{t.tts.speed}</Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <TouchableOpacity
+                    style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border }}
+                    onPress={() => { const v = Math.max(0.5, (ttsSpeed || 1.0) - 0.1); saveTtsSpeed(v); reloadTtsSpeed() }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>−</Text>
+                  </TouchableOpacity>
+                  <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600', minWidth: 40, textAlign: 'center' }}>
+                    {(ttsSpeed || 1.0).toFixed(1)}x
+                  </Text>
+                  <TouchableOpacity
+                    style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.card, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: colors.border }}
+                    onPress={() => { const v = Math.min(2.0, (ttsSpeed || 1.0) + 0.1); saveTtsSpeed(v); reloadTtsSpeed() }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <View style={styles.settingItem}>
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                  onPress={async () => {
+                    try {
+                      const voices = await Speech.getAvailableVoices()
+                      setVoiceList(voices.map((v: any) => ({ id: v.identifier, name: `${v.language} - ${v.name}` })))
+                    } catch {}
+                    setShowVoicePicker(true)
+                  }}
+                >
+                  <Text style={[styles.settingText, { color: colors.text }]}>语音</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{ttsVoice || '默认'}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 18 }}>›</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: ttsTestStatus === 'playing' ? '#34A759' : ttsTestStatus ? colors.error : colors.primary,
+                  borderRadius: 8, paddingVertical: 8, alignItems: 'center', marginHorizontal: 16, marginTop: 8,
+                  opacity: ttsTestStatus === 'playing' ? 0.7 : 1,
+                }}
+                onPress={async () => {
+                  setTtsTestStatus('playing')
+                  try {
+                    const sub = Speech.onFinish(() => { sub.remove(); setTtsTestStatus(null) })
+                    const opts: any = { rate: ttsSpeed || 1.0 }
+                    if (ttsVoice) opts.voice = ttsVoice
+                    await Speech.speak('Hello, this is a test. 你好，这是一个测试。', opts)
+                  } catch (e: any) { setTtsTestStatus(e?.message || '错误') }
+                }}
+                disabled={ttsTestStatus === 'playing'}
+              >
+                <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '600' }}>
+                  {ttsTestStatus === 'playing' ? '🔊 正在播放...' :
+                   ttsTestStatus ? `❌ ${ttsTestStatus}` : '测试 TTS'}
+                </Text>
+              </TouchableOpacity>
+            </>)}
+
+            {ttsEngine === 'model' && (
+              <>
+                <View style={styles.settingItem}>
+                  <View style={styles.settingLeft}>
+                    <Text style={[styles.settingText, { color: colors.text }]}>Vocoder</Text>
+                  </View>
+                  <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t.tts.modelEngine}</Text>
+                </View>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, paddingHorizontal: 16, paddingBottom: 12 }}>
+                  功能暂未实现
+                </Text>
+              </>
+            )}
+
+            <View style={[styles.separator, { backgroundColor: colors.background }]} />
+            <View style={styles.settingItem}>
+              <View style={styles.settingLeft}>
+                <Text style={[styles.settingText, { color: colors.text }]}>{t.tts.autoSpeak}</Text>
+              </View>
+              <Switch
+                value={ttsAutoSpeak || false}
+                onValueChange={v => { saveTtsAutoSpeak(v); reloadTtsAutoSpeak() }}
+                thumbColor={ttsAutoSpeak ? colors.primary : colors.textSecondary}
+                trackColor={{ false: colors.border, true: colors.primary + '40' }}
+              />
+            </View>
+          </>)}
+        </SettingsSection>
+
         <SettingsSection title={t.settings.about}>
           <View style={styles.settingItem}>
             <View style={styles.settingLeft}>
@@ -233,7 +370,7 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
                   {t.settings.version}
                 </Text>
                 <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
-                  mLm 0.3.2 (llama.rn b{BuildInfo.number})
+                  mLm 0.4.0 (llama.rn b{BuildInfo.number})
                 </Text>
               </View>
             </View>
@@ -253,6 +390,38 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
             <Text style={{ color: colors.textSecondary, fontSize: 20 }}>›</Text>
           </TouchableOpacity>
         </SettingsSection>
+
+        {/* 语音选择器 */}
+        <Modal visible={showVoicePicker} transparent animationType="fade" onRequestClose={() => setShowVoicePicker(false)}>
+          <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setShowVoicePicker(false)}>
+            <View style={[styles.modal, { backgroundColor: colors.surface }]}>
+              <View style={[styles.modalHdr, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.modalTtl, { color: colors.text }]}>选择语音</Text>
+                <TouchableOpacity onPress={() => setShowVoicePicker(false)}>
+                  <Text style={{ color: colors.primary, fontSize: 16, fontWeight: '600' }}>{t.common.close}</Text>
+                </TouchableOpacity>
+              </View>
+              {voiceList.length === 0 ? (
+                <Text style={{ color: colors.textSecondary, textAlign: 'center', padding: 20 }}>暂无语音数据</Text>
+              ) : (
+                <FlatList
+                  data={[{ id: '', name: '默认' }, ...voiceList]}
+                  keyExtractor={item => item.id || 'default'}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={{ paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                      onPress={() => { saveTtsVoice(item.id || null); reloadTtsVoice(); setShowVoicePicker(false) }}
+                    >
+                      <Text style={{ color: colors.text, fontSize: 15 }}>{item.name}</Text>
+                      <Text style={{ color: colors.primary, fontSize: 16 }}>{(ttsVoice || null) === (item.id || null) ? '●' : '○'}</Text>
+                    </TouchableOpacity>
+                  )}
+                  style={{ maxHeight: 300 }}
+                />
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </ScrollView>
     </SafeAreaView>
   )
@@ -315,4 +484,8 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     marginLeft: 8,
   },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modal: { borderRadius: 16, padding: 20, margin: 20, maxHeight: '80%', width: '90%' },
+  modalHdr: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 12, borderBottomWidth: 1, marginBottom: 8 },
+  modalTtl: { fontSize: 18, fontWeight: '700' },
 })

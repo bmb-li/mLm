@@ -61,6 +61,10 @@ export type TranslationStrings = {
     customModelsSection: string
     localModels: string
     importModel: string
+    localGuide: string
+    localGuideTitle: string
+    localGuideDesc: string
+    goHuggingFace: string
     hfRepoPlaceholder: string
     fileNamePlaceholder: string
     addModel: string
@@ -81,12 +85,30 @@ export type TranslationStrings = {
     tabText: string
     tabMultimodal: string
     tabMmproj: string
+    tabTts: string
+    tabWavtokenizer: string
     vision: string
     audio: string
     mmprojSelect: string
     noMmproj: string
     removeMmproj: string
     importMmproj: string
+    selectVocoder: string
+    removeVocoder: string
+    importVocoder: string
+    noVocoder: string
+    ttsModel: string
+    ttsModelDesc: string
+    importLocalModel: string
+  }
+  tts: {
+    title: string
+    engine: string
+    off: string
+    systemEngine: string
+    modelEngine: string
+    autoSpeak: string
+    speed: string
   }
   server: {
     title: string

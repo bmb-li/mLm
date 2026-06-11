@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useFocusEffect } from '@react-navigation/native'
-import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image } from 'react-native'
+import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image, Linking } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Clipboard from '@react-native-clipboard/clipboard'
@@ -11,6 +11,8 @@ import ModelSelectorBar from '../components/ModelSelectorBar'
 import CompletionParamsModal from '../components/CompletionParamsModal'
 import { useModelContext } from '../contexts/ModelContext'
 import { useStoredCompletionParams } from '../hooks/useStoredSetting'
+import { useTtsEngine, useTtsAutoSpeak, useTtsSpeed, useTtsVoice, useStoredCustomModels } from '../hooks/useStoredSetting'
+import Speech from '@mhpdev/react-native-speech'
 import { searchWebViaApi, buildSearchSystemPrompt, getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
 import { enrichWithContent } from '../features/websearch/services/ContentFetchService'
 import { loadSearchEnabled, loadSearchEngine, loadTavilyApiKey } from '../features/websearch/utils/searchStorage'
@@ -101,9 +103,14 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     loadSearchEnabled().then(setSearchEnabled)
     loadSearchEngine().then(setSearchEngine)
     loadTavilyApiKey().then(k => { tavilyApiKeyRef.current = k })
+    reloadTtsEngine()
+    reloadTtsAutoSpeak()
+    reloadTtsSpeed()
+    reloadTtsVoice()
   }, []))
 
-  const { context, isModelReady, activeModelName } = useModelContext()
+  const { context, isModelReady, activeModelName, vocoderReady, loadModel } = useModelContext()
+  const { value: customModels } = useStoredCustomModels()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
 
   const [showAttachMenu, setShowAttachMenu] = useState(false)
@@ -112,6 +119,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [isRecording, setIsRecording] = useState(false)
   const recordingRef = useRef<{ stop: () => Promise<string> } | null>(null)
   const processingImageRef = useRef(false)
+  const ttsBufferRef = useRef('')
+  const ttsSentenceRef = useRef('')
+  const ttsEventsRef = useRef<any>(null)
+  const ttsSpeakingRef = useRef(false)
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null)
+  const { value: ttsEngine, reload: reloadTtsEngine } = useTtsEngine()
+  const { value: ttsAutoSpeak, reload: reloadTtsAutoSpeak } = useTtsAutoSpeak()
+  const { value: ttsSpeed, reload: reloadTtsSpeed } = useTtsSpeed()
+  const { value: ttsVoice, reload: reloadTtsVoice } = useTtsVoice()
 
   useEffect(() => {
     AsyncStorage.getItem(CONVERSATIONS_KEY).then(data => {
@@ -430,7 +446,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         (_reqId: number, data: any) => {
           if (processingImageRef.current) processingImageRef.current = false
           const reasoningContent = data.reasoning_content || ''
-          let content = data.content || data.accumulated_text || ''
+          let content = data.content || ''
           if (reasoningContent || /<think>/i.test(content)) {
             content = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim()
           }
@@ -443,6 +459,20 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             autoExpandedRef.current = true
             setExpandedReasoning(prev => new Set(prev).add(assistantId))
           }
+          // TTS: stream by sentence using incremental token
+          if (ttsAutoSpeak && ttsEngine === 'system' && data.token && data.content) {
+            if (!ttsSpeakingRef.current) {
+              ttsSpeakingRef.current = true
+              setSpeakingMsgId(assistantId)
+            }
+            ttsSentenceRef.current += data.token
+            const m = ttsSentenceRef.current.match(/[，,。！？.!?\n]/)
+            if (m) {
+              const sentence = ttsSentenceRef.current.substring(0, m.index! + 1).trim()
+              ttsSentenceRef.current = ttsSentenceRef.current.substring(m.index! + 1)
+              if (sentence) Speech.speak(sentence, { rate: ttsSpeed || 1.0, voice: ttsVoice || undefined }).catch(() => {})
+            }
+          }
         },
       )
       stopRef.current = stop
@@ -453,6 +483,23 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       setMessages(prev => prev.map(msg =>
         msg.id === assistantId ? { ...msg, content: finalContent, searchResults: searchHits || undefined, timings: completionResult.timings } : msg,
       ))
+
+      // TTS: speak remaining buffered text
+      if (ttsAutoSpeak && ttsSentenceRef.current.trim() && ttsEngine === 'system') {
+        Speech.speak(ttsSentenceRef.current.trim(), { rate: ttsSpeed || 1.0, voice: ttsVoice || undefined }).catch(() => {})
+      }
+      ttsSentenceRef.current = ''
+      ttsBufferRef.current = ''
+      // TTS: poll for queue empty to clear icon
+      if (ttsSpeakingRef.current) {
+        const pollDone = () => {
+          Speech.isSpeaking().then(speaking => {
+            if (!speaking) { ttsSpeakingRef.current = false; setSpeakingMsgId(null) }
+            else setTimeout(pollDone, 500)
+          }).catch(() => {})
+        }
+        setTimeout(pollDone, 1000)
+      }
     } catch (error: any) {
       if (error?.message?.toLowerCase().includes('model') || error?.message?.toLowerCase().includes('no model')) {
         Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
@@ -462,7 +509,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     } finally {
       setIsStreaming(false)
     }
-  }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine])
+  }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine, ttsEngine, ttsAutoSpeak, ttsSpeed])
 
   const handleStopRecording = useCallback(async () => {
     if (!recordingRef.current) { setIsRecording(false); return }
@@ -502,7 +549,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
           const reasoningContent = data.reasoning_content || ''
-          let content = data.content || data.accumulated_text || ''
+          let content = data.content || ''
           if (reasoningContent || /<think>/i.test(content)) {
             content = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim()
           }
@@ -562,6 +609,92 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const copyToClipboard = useCallback((text: string) => {
     Clipboard.setString(text)
   }, [])
+
+  const writeLog = useCallback(async (tag: string, msg: string) => {
+    try {
+      const p = `${RNBlobUtil.fs.dirs.CacheDir}/mlm_debug.log`
+      const entry = `[${new Date().toISOString().slice(11,19)}] [${tag}] ${msg}\n`
+      const prev = (await RNBlobUtil.fs.exists(p)) ? await RNBlobUtil.fs.readFile(p, 'utf8') : ''
+      await RNBlobUtil.fs.writeFile(p, (prev + entry).slice(-10000), 'utf8')
+    } catch {}
+  }, [])
+
+  const handleSpeak = useCallback(async (msgId: string, text: string) => {
+    if (!text) return
+    if (ttsEngine === 'off') return
+    const speaking = await Speech.isSpeaking().catch(() => false)
+    if (speaking) {
+      try { await Speech.stop() } catch {}
+      ttsSpeakingRef.current = false
+      setSpeakingMsgId(null)
+      return
+    }
+    setSpeakingMsgId(msgId)
+    ttsSpeakingRef.current = true
+
+    if (ttsEngine === 'model') {
+      try {
+        writeLog('TTS', `model speak: id=${msgId.slice(0,8)}, len=${text.length}`)
+        // Auto-load TTS model if vocoder not ready
+        if (!vocoderReady && customModels) {
+          const ttsModel = customModels.find(m => (m as any).vocoderLocalPath)
+          if (!ttsModel) {
+            Alert.alert('未找到 TTS 模型', '请先在语音模型选项卡下载 OuteTTS 模型和声码器。')
+            setSpeakingMsgId(null); return
+          }
+          writeLog('TTS', `auto-loading model: ${ttsModel.id}`)
+          await loadModel(ttsModel.localPath || '', ttsModel.id, undefined, (ttsModel as any).vocoderLocalPath)
+        }
+        if (!context || !vocoderReady) { setSpeakingMsgId(null); return }
+        writeLog('TTS', 'formatting audio completion...')
+        const { prompt, grammar } = await context.getFormattedAudioCompletion(null, text)
+        const guideTokens = await context.getAudioCompletionGuideTokens(text)
+        writeLog('TTS', 'generating audio...')
+        const result = await context.completion({
+          prompt, grammar, guide_tokens: guideTokens,
+          n_predict: 4096, temperature: 0.7, stop: ['<|im_end|>'],
+        })
+        if (result.audio_tokens?.length > 0) {
+          writeLog('TTS', `decoding ${result.audio_tokens.length} tokens...`)
+          const decoded = await context.decodeAudioTokens(result.audio_tokens)
+          const float32 = new Float32Array(decoded)
+          const { AudioContext } = require('react-native-audio-api')
+          const actx = new AudioContext({ sampleRate: 24000 })
+          const buf = actx.createBuffer(1, float32.length, 24000)
+          buf.copyToChannel(float32, 0)
+          const src = actx.createBufferSource()
+          src.buffer = buf; src.connect(actx.destination)
+          src.onended = () => { actx.close(); setSpeakingMsgId(null) }
+          src.start()
+          writeLog('TTS', 'playing...')
+        } else {
+          writeLog('TTS', 'no audio tokens')
+          setSpeakingMsgId(null)
+        }
+      } catch (e: any) {
+        writeLog('TTS', `model error: ${e?.message || e}`)
+        Alert.alert('模型 TTS 错误', e?.message || String(e))
+        setSpeakingMsgId(null)
+      }
+      return
+    }
+
+    // System TTS
+    try {
+      writeLog('TTS', `sys speak: id=${msgId.slice(0,8)}, len=${text.length}`)
+      if (ttsEventsRef.current) ttsEventsRef.current.remove()
+      ttsEventsRef.current = Speech.onFinish(() => {
+        writeLog('TTS', 'finish event')
+        setSpeakingMsgId(null)
+      })
+      writeLog('TTS', 'calling speak...')
+      await Speech.speak(text, { rate: ttsSpeed || 1.0, voice: ttsVoice || undefined })
+      writeLog('TTS', 'speak returned ok')
+    } catch (e: any) {
+      writeLog('TTS', `sys error: ${e?.message || e}`)
+      setSpeakingMsgId(null)
+    }
+  }, [ttsSpeed, writeLog, ttsEngine, vocoderReady, customModels, loadModel, context])
 
   const deleteMessage = useCallback((id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id))
@@ -639,7 +772,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
           const reasoningContent = data.reasoning_content || ''
-          let content = data.content || data.accumulated_text || ''
+          let content = data.content || ''
           if (reasoningContent || /<think>/i.test(content)) {
             content = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, '').trim()
           }
@@ -652,6 +785,20 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             autoExpandedRef.current = true
             setExpandedReasoning(prev => new Set(prev).add(assistantId))
           }
+          // TTS: stream by sentence using incremental token
+          if (ttsAutoSpeak && ttsEngine === 'system' && data.token && data.content) {
+            if (!ttsSpeakingRef.current) {
+              ttsSpeakingRef.current = true
+              setSpeakingMsgId(assistantId)
+            }
+            ttsSentenceRef.current += data.token
+            const m = ttsSentenceRef.current.match(/[，,。！？.!?\n]/)
+            if (m) {
+              const sentence = ttsSentenceRef.current.substring(0, m.index! + 1).trim()
+              ttsSentenceRef.current = ttsSentenceRef.current.substring(m.index! + 1)
+              if (sentence) Speech.speak(sentence, { rate: ttsSpeed || 1.0, voice: ttsVoice || undefined }).catch(() => {})
+            }
+          }
         },
       )
       stopRef.current = stop
@@ -662,12 +809,28 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       setMessages(prev => prev.map(msg =>
         msg.id === assistantId ? { ...msg, content: finalContent, timings: completionResult.timings } : msg,
       ))
+
+      // TTS: speak remaining buffered text
+      if (ttsAutoSpeak && ttsSentenceRef.current.trim() && ttsEngine === 'system') {
+        Speech.speak(ttsSentenceRef.current.trim(), { rate: ttsSpeed || 1.0, voice: ttsVoice || undefined }).catch(() => {})
+      }
+      ttsSentenceRef.current = ''
+      // TTS: poll for queue empty to clear icon
+      if (ttsSpeakingRef.current) {
+        const pollDone = () => {
+          Speech.isSpeaking().then(speaking => {
+            if (!speaking) { ttsSpeakingRef.current = false; setSpeakingMsgId(null) }
+            else setTimeout(pollDone, 500)
+          }).catch(() => {})
+        }
+        setTimeout(pollDone, 1000)
+      }
     } catch (error: any) {
       Alert.alert(t.common.error, error.message)
     } finally {
       setIsStreaming(false)
     }
-  }, [context, messages, completionParams])
+  }, [context, messages, completionParams, ttsEngine, ttsAutoSpeak, ttsSpeed])
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isUser = item.role === 'user'
@@ -825,6 +988,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                   >
                     <Text style={{ fontSize: 13, color: colors.textSecondary }}>🔄</Text>
                   </TouchableOpacity>
+                  {ttsEngine !== 'off' && (
+                    <TouchableOpacity
+                      hitSlop={6}
+                      onPress={() => handleSpeak(item.id, item.content)}
+                      style={{ padding: 4 }}
+                    >
+                      <Text style={{ fontSize: 13, color: colors.textSecondary }}>{speakingMsgId === item.id ? '🔊' : '🔈'}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   View,
   Text,
@@ -63,6 +63,21 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   const { value: completionParams, setValue: setCompletionParams } =
     useStoredCompletionParams()
   const { value: ttsParams, setValue: setTtsParams } = useStoredTTSParams()
+
+  // 自动检测本地 TTS 模型并加载
+  useEffect(() => {
+    if (isModelReady) return
+    ;(async () => {
+      const base = ReactNativeBlobUtil.fs.dirs.DocumentDir + '/LLMs'
+      const ttsPath = `${base}/tts/OuteTTS-0.3-500M-Q4_K_M.gguf`
+      const vocoderPath = `${base}/wavtokenizer/WavTokenizer-Large-75-Q5_1.gguf`
+      const ttsExists = await ReactNativeBlobUtil.fs.exists(ttsPath).catch(() => false)
+      const vocoderExists = await ReactNativeBlobUtil.fs.exists(vocoderPath).catch(() => false)
+      if (ttsExists && vocoderExists) {
+        initializeModels(ttsPath, vocoderPath)
+      }
+    })()
+  }, [isModelReady])
 
   const handleSaveContextParams = (params: ContextParams) => {
     setContextParams(params)
@@ -189,7 +204,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
 
       // Initialize vocoder directly after TTS model
       try {
-        await llamaContext.initVocoder({ path: vocoderPath, n_batch: 4096 })
+        await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256 })
         setIsVocoderReady(true)
       } catch (vocoderError) {
         console.log('Vocoder initialization error:', vocoderError)
