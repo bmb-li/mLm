@@ -10,6 +10,9 @@ import ToolCallsScreen from '../screens/ToolCallsScreen'
 import ParallelDecodingScreen from '../screens/ParallelDecodingScreen'
 import EmbeddingScreen from '../screens/EmbeddingScreen'
 import TTSScreen from '../screens/TTSScreen'
+import AppGalleryScreen from '../screens/AppGalleryScreen'
+import AppViewerScreen from '../screens/AppViewerScreen'
+import AppGenSettingsScreen from '../screens/AppGenSettingsScreen'
 import BenchScreen from '../screens/BenchScreen'
 import StressTestScreen from '../screens/StressTestScreen'
 import type { RootStackParamList } from '../types/navigation'
@@ -95,6 +98,21 @@ export default function RootNavigator() {
         name="APISetup"
         component={APISetupScreen}
         options={{ title: 'API Setup Guide' }}
+      />
+      <Stack.Screen
+        name="AppGallery"
+        component={AppGalleryScreen}
+        options={{ title: '应用画廊' }}
+      />
+      <Stack.Screen
+        name="AppViewer"
+        component={AppViewerScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="AppGenSettings"
+        component={AppGenSettingsScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   )

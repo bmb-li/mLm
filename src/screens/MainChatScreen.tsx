@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
-import { useFocusEffect } from '@react-navigation/native'
-import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image, Linking } from 'react-native'
+import { useFocusEffect, useRoute } from '@react-navigation/native'
+import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image, Linking, ScrollView } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Clipboard from '@react-native-clipboard/clipboard'
@@ -14,6 +14,8 @@ import { useStoredCompletionParams } from '../hooks/useStoredSetting'
 import { useTtsEngine, useTtsAutoSpeak, useTtsSpeed, useTtsVoice, useStoredCustomModels } from '../hooks/useStoredSetting'
 import Speech from '@mhpdev/react-native-speech'
 import { searchWebViaApi, buildSearchSystemPrompt, getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
+import { APP_GEN_PROMPT } from '../services/appgen/prompts'
+import { saveApp, getSavedAppsMeta, getAppCode } from '../services/appgen/storage'
 import { enrichWithContent } from '../features/websearch/services/ContentFetchService'
 import { loadSearchEnabled, loadSearchEngine, loadTavilyApiKey } from '../features/websearch/utils/searchStorage'
 import type { SearchResult, SearchEngine } from '../features/websearch/types'
@@ -23,6 +25,13 @@ import { launchCamera, launchImageLibrary } from 'react-native-image-picker'
 import ReactNativeBlobUtil from 'react-native-blob-util'
 import RNBlobUtil from 'react-native-blob-util'
 import Icon from '@react-native-vector-icons/material-design-icons'
+import AppPreview from '../components/AppPreview'
+import CodePreview from '../components/CodePreview'
+import { FILE_TOOLS } from '../services/appgen/tools'
+import { executeToolCalls } from '../services/appgen/toolEngine'
+import * as projectStorage from '../services/appgen/projectStorage'
+import { log } from '../services/appgen/logger'
+import { loadConfig, getEffectivePrompt, type AppGenConfig } from '../services/appgen/appModeStorage'
 
 interface ChatMessage {
   id: string
@@ -32,6 +41,7 @@ interface ChatMessage {
   searchResults?: SearchResult[]
   imageData?: string
   audioData?: string
+  htmlCode?: string
   timings?: any
 }
 
@@ -86,6 +96,10 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null)
 
   const [searchEnabled, setSearchEnabled] = useState(false)
+  const [isAppMode, setIsAppMode] = useState(false)
+  const latestHtmlRef = useRef('')
+  const editAppNameRef = useRef('')
+  const editAppCodeRef = useRef('')
   const [searchEngine, setSearchEngine] = useState<SearchEngine>('google')
   const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null)
   const [isSearching, setIsSearching] = useState(false)
@@ -109,16 +123,55 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     reloadTtsVoice()
   }, []))
 
+  // Handle edit app route params
+  const route = useRoute<any>()
+  useEffect(() => {
+    const editCode = route.params?.editAppCode
+    const projectId = route.params?.editProjectId
+    if (projectId) {
+      projectIdRef.current = projectId
+    }
+    if (editCode) {
+      const name = route.params?.editAppName || 'Unnamed'
+      setIsAppMode(true)
+      setPendingAppCode({ code: editCode, name })
+      editAppCodeRef.current = editCode
+      editAppNameRef.current = name
+      latestHtmlRef.current = editCode
+      navigation.setParams({ editAppCode: undefined, editAppName: undefined, editProjectId: undefined })
+      setInputText('')
+    }
+  }, [route.params?.editAppCode])
+
   const { context, isModelReady, activeModelName, vocoderReady, loadModel } = useModelContext()
   const { value: customModels } = useStoredCustomModels()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
 
   const [showAttachMenu, setShowAttachMenu] = useState(false)
   const [pendingMedia, setPendingMedia] = useState<{ type: 'image' | 'audio'; data: string; mimeType: string } | null>(null)
+  const [pendingAppCode, setPendingAppCode] = useState<{ code: string; name: string } | null>(null)
+  const [activeAppTab, setActiveAppTab] = useState<'dialogue' | 'preview' | 'filetree' | string>('dialogue')
+  const [appFileTabs, setAppFileTabs] = useState<string[]>([])
+  const [fileTabContent, setFileTabContent] = useState('')
+  const projectIdRef = useRef('')
+  const [appTodos, setAppTodos] = useState<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'error' }[]>([])
+  const appGenConfigRef = useRef<AppGenConfig>({ mode: 'complex' })
   const [isVoiceMode, setIsVoiceMode] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const recordingRef = useRef<{ stop: () => Promise<string> } | null>(null)
   const processingImageRef = useRef(false)
+
+  // Load file content when a file tab is selected
+  useEffect(() => {
+    if (isAppMode && activeAppTab !== 'dialogue' && activeAppTab !== 'preview' && activeAppTab !== 'filetree' && projectIdRef.current) {
+      projectStorage.readFile(projectIdRef.current, activeAppTab).then(setFileTabContent).catch(() => setFileTabContent(''))
+    }
+  }, [activeAppTab, isAppMode])
+  // Clear todos when app mode exits
+  useEffect(() => { if (!isAppMode) setAppTodos([]) }, [isAppMode])
+  // Load app gen config at startup and when app mode activates
+  useEffect(() => { loadConfig().then(cfg => { appGenConfigRef.current = cfg }) }, [])
+  useEffect(() => { if (isAppMode) loadConfig().then(cfg => { appGenConfigRef.current = cfg }) }, [isAppMode])
   const ttsBufferRef = useRef('')
   const ttsSentenceRef = useRef('')
   const ttsEventsRef = useRef<any>(null)
@@ -331,6 +384,224 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
   }, [])
 
+  const handleAIMessage = useCallback(async (msg: any, postMessage: (data: any) => void): Promise<string> => {
+    if (msg.type === 'getApps') {
+      const apps = await getSavedAppsMeta()
+      postMessage({ id: msg.requestId, type: 'appsResult', apps })
+      return ''
+    }
+
+    if (msg.type === 'openApp') {
+      const htmlCode = await getAppCode(msg.appId)
+      postMessage({ id: msg.requestId, type: 'openAppResult', htmlCode: htmlCode || '' })
+      return ''
+    }
+
+    if (!context) throw new Error('No model loaded')
+
+    if (msg.type === 'aiChat') {
+      const systemPrompt = msg.systemPrompt || 'You are a helpful assistant.'
+      const allMessages = [
+        { role: 'system' as const, content: systemPrompt },
+        ...(msg.messages || []).map((m: any) => ({ role: m.role, content: m.content })),
+      ]
+      const completionParams = { messages: allMessages }
+      const { promise } = await context.parallel.completion(completionParams, (_reqId: number, data: any) => {
+        const content = data.content || ''
+        if (content) {
+          postMessage({ id: msg.requestId, type: 'chunk', text: content })
+        }
+      })
+      const result = await promise
+      const finalText = result.content || result.text || ''
+      postMessage({ id: msg.requestId, type: 'done', text: finalText })
+      return finalText
+    }
+
+    if (msg.type === 'repairJSON') {
+      const repairPrompt = `Fix the following JSON to be valid. Return ONLY the fixed JSON, no explanation.\n\n${msg.jsonString}`
+      const { promise } = await context.parallel.completion(
+        { messages: [{ role: 'system', content: 'You fix JSON. Return only the fixed JSON.' }, { role: 'user', content: repairPrompt }] },
+        () => {},
+      )
+      const result = await promise
+      const fixed = (result.content || result.text || '').trim()
+      postMessage({ id: msg.requestId, type: 'repairResult', result: fixed })
+      return fixed
+    }
+
+    throw new Error('Unknown message type: ' + msg.type)
+  }, [context])
+
+  const handleAppModeToggle = useCallback(async () => {
+    if (isAppMode) {
+      setIsAppMode(false)
+    } else {
+      const cfg = await loadConfig()
+      appGenConfigRef.current = cfg
+      setIsAppMode(true)
+    }
+  }, [isAppMode])
+
+  // App mode tool-calling completion
+  const startAppModeCompletion = useCallback(async (
+    userText: string,
+    userMsg: ChatMessage,
+    assistantId: string,
+    project: { id: string; name: string },
+  ) => {
+    if (!context) { Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage); return }
+
+    setIsStreaming(true)
+    autoExpandedRef.current = false
+
+    try {
+      // Read project structure for context
+      const fileTree = await projectStorage.getProjectFileTree(project.id)
+      const projectContext = `\n\nCurrent project "${project.name}" files:\n${fileTree}\n\n`
+
+      log('[APPMODE] Start', { project: project.id, name: project.name, fileTree })
+      if (userMsg.imageData) log('[APPMODE] Has image input')
+      if (userMsg.audioData) log('[APPMODE] Has audio input')
+
+      const systemContent = APP_GEN_PROMPT + projectContext
+      let allMessages: any[] = [
+        { role: 'system' as const, content: systemContent },
+        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user' as const, content: userText },
+      ]
+
+      const params = completionParams || {}
+      let loopCount = 0
+      const maxLoops = 20
+      let extractedHtml: string | undefined
+      let currentAssistantId = assistantId
+
+      while (loopCount < maxLoops) {
+        loopCount++
+        const loopId = currentAssistantId
+        log('[APPMODE] Loop', { loopCount, messagesCount: allMessages.length, assistantId: loopId })
+
+        // For loops after the first, create a new assistant message
+        if (loopCount > 1) {
+          const newMsg: ChatMessage = { id: loopId, role: 'assistant', content: '' }
+          setMessages(prev => [...prev, newMsg])
+        }
+
+        const completionResult = await context.completion(
+          { ...params, messages: allMessages, tools: FILE_TOOLS, tool_choice: 'auto', reasoning_format: 'auto' },
+          (_data: any) => {
+            const content = _data.content || ''
+            const reasoningContent = _data.reasoning_content || ''
+            if (content || reasoningContent) {
+              setMessages(prev => prev.map(msg =>
+                msg.id === loopId ? { ...msg, content, reasoningContent } : msg,
+              ))
+            }
+            if (content && content.includes('```html')) {
+              const sm = content.match(/```html\n([\s\S]*)$/)
+              if (sm) {
+                setMessages(prev => prev.map(msg =>
+                  msg.id === loopId ? { ...msg, htmlCode: sm[1] } : msg,
+                ))
+              }
+            }
+          },
+        )
+
+        const finalContent = completionResult.interrupted
+          ? completionResult.text
+          : (completionResult.content || completionResult.text || '')
+        const toolCalls = completionResult.tool_calls || []
+
+        log('[APPMODE] Completion result', {
+          contentLength: finalContent.length,
+          contentStart: finalContent.slice(0, 100),
+          toolCallsCount: toolCalls.length,
+          interrupted: completionResult.interrupted,
+        })
+        toolCalls.forEach((tc: any) => log('[APPMODE] Tool call', { name: tc.function?.name, args: tc.function?.arguments }))
+
+        // Update final content for this loop's message
+        if (finalContent) {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loopId ? { ...msg, content: finalContent } : msg,
+          ))
+        }
+
+        // Extract htmlCode for preview
+        const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
+        extractedHtml = htmlMatch?.[1]
+        if (extractedHtml) {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loopId ? { ...msg, htmlCode: extractedHtml } : msg,
+          ))
+          const files = await projectStorage.listProjectFiles(project.id)
+          if (!files.includes('index.html')) {
+            const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
+            const appName = nameMatch?.[1] || project.name
+            await projectStorage.writeFile(project.id, 'index.html', extractedHtml)
+            await projectStorage.updateProjectName(project.id, appName)
+          }
+        }
+
+        if (toolCalls.length === 0) break
+
+        // Ensure every tool call has an ID
+        toolCalls.forEach((tc: any) => {
+          if (!tc.id) tc.id = 'call_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+        })
+
+        // Execute tools
+        const handleTodoEvent = (event: any) => {
+          if (event.type === 'create') {
+            setAppTodos((event.items || []).map((label: string, i: number) => ({ id: String(i + 1), label, status: 'pending' })))
+          } else if (event.type === 'update') {
+            setAppTodos((prev: any[]) => prev.map(t => t.id === event.id ? { ...t, status: event.status } : t))
+          }
+        }
+        const toolResults = await executeToolCalls(toolCalls as any, project.id, handleTodoEvent)
+        log('[APPMODE] Tool results', toolResults.map(r => ({ id: r.tool_call_id, content: r.content.slice(0, 200) })))
+
+        // Add assistant + tool results to allMessages for next loop's context
+        allMessages = [
+          ...allMessages,
+          { role: 'assistant' as const, content: finalContent || '', tool_calls: toolCalls.map((tc: any) => ({
+            id: tc.id,
+            type: 'function',
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })) },
+          ...toolResults.map(tr => ({ role: 'tool' as const, tool_call_id: tr.tool_call_id, content: tr.content })),
+        ]
+
+        // Refresh file tabs
+        const updatedFiles = await projectStorage.listProjectFiles(project.id)
+        setAppFileTabs(updatedFiles.filter(f => f !== '.meta.json'))
+
+        // Set up next loop's assistant ID
+        currentAssistantId = 'assistant_' + Date.now() + '_' + loopCount
+      }
+
+      // Final save
+      try {
+        if (extractedHtml) {
+          await projectStorage.writeFile(project.id, 'index.html', extractedHtml)
+        }
+        await projectStorage.updateProjectName(project.id, project.name)
+        log('[APPMODE] Done', { extractedHtmlLength: extractedHtml?.length || 0 })
+      } catch {}
+
+    } catch (error: any) {
+      if (error?.message?.toLowerCase().includes('model') || error?.message?.toLowerCase().includes('no model')) {
+        Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
+      } else {
+        Alert.alert(t.common.error, error?.message || '未知错误')
+      }
+    } finally {
+      setIsStreaming(false)
+    }
+  }, [context, messages, completionParams])
+
   const handleSend = useCallback(async (mediaOverride?: typeof pendingMedia) => {
     const text = inputText.trim()
     const media = mediaOverride || pendingMedia
@@ -367,6 +638,89 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       pendingQueryRef.current = text
       pendingAssistantIdRef.current = assistantId
       setShowMetasoModal(true)
+      return
+    }
+
+    // App mode
+    if (isAppMode) {
+      const cfg = appGenConfigRef.current
+      const appName = pendingAppCode?.name || `App_${Date.now()}`
+      let projectId = projectIdRef.current
+
+      if (cfg.mode === 'complex' && !projectId) {
+        const project = await projectStorage.createProject(appName, 'index.html')
+        projectId = project.id
+        projectIdRef.current = projectId
+      }
+
+      setPendingAppCode(null)
+
+      if (cfg.mode === 'complex' && pendingAppCode?.code) {
+        await projectStorage.writeFile(projectId, 'index.html', pendingAppCode.code)
+      }
+
+      if (cfg.mode === 'complex') {
+        const projectMeta = projectId ? await projectStorage.getProjectMeta(projectId) : null
+        await startAppModeCompletion(text, userMsg, assistantId, { id: projectId || '', name: projectMeta?.name || appName })
+      } else {
+        // Simple mode: use APP_GEN_PROMPT with regular completion (no tools, no tabs)
+        setIsStreaming(true)
+        autoExpandedRef.current = false
+        try {
+          const systemContent = getEffectivePrompt(cfg)
+          const allMessages = [
+            { role: 'system' as const, content: systemContent },
+            ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+            { role: 'user' as const, content: text },
+          ]
+          const params = completionParams || {}
+          const { promise, stop } = await context.parallel.completion(
+            { ...params, messages: allMessages, reasoning_format: 'auto' },
+            (_reqId: number, data: any) => {
+              const content = data.content || ''
+              if (content) {
+                setMessages(prev => prev.map(msg =>
+                  msg.id === assistantId ? { ...msg, content } : msg,
+                ))
+              }
+              if (content && content.includes('```html')) {
+                const sm = content.match(/```html\n([\s\S]*)$/)
+                if (sm) {
+                  setMessages(prev => prev.map(msg =>
+                    msg.id === assistantId ? { ...msg, htmlCode: sm[1] } : msg,
+                  ))
+                }
+              }
+            },
+          )
+          stopRef.current = stop
+          const result = await promise
+          stopRef.current = null
+          const finalContent = result.interrupted ? result.text : (result.content || result.text || '')
+          const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
+          const extractedHtml = htmlMatch?.[1]
+          setMessages(prev => prev.map(msg =>
+            msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: extractedHtml || msg.htmlCode } : msg,
+          ))
+          // Save to gallery
+          if (extractedHtml) {
+            try {
+              const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
+              const appName = nameMatch?.[1] || 'Generated App'
+              const project = await projectStorage.createProject(appName, 'index.html', { 'index.html': extractedHtml })
+              projectIdRef.current = project.id
+            } catch {}
+          }
+        } catch (error: any) {
+          if (error?.message?.toLowerCase().includes('model')) {
+            Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
+          } else {
+            Alert.alert(t.common.error, error?.message || '未知错误')
+          }
+        } finally {
+          setIsStreaming(false)
+        }
+      }
       return
     }
 
@@ -420,9 +774,17 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         }
       }
 
-      const systemContent = searchSystemPrompt
-        ? DEFAULT_SYSTEM_PROMPT + '\n\n' + searchSystemPrompt
-        : DEFAULT_SYSTEM_PROMPT
+      const systemContent = isAppMode
+        ? APP_GEN_PROMPT
+        : (searchSystemPrompt
+          ? DEFAULT_SYSTEM_PROMPT + '\n\n' + searchSystemPrompt
+          : DEFAULT_SYSTEM_PROMPT)
+      const appEditHtml = editAppCodeRef.current || pendingAppCode?.code
+      let userText = text
+      if (isAppMode && appEditHtml && !text.toLowerCase().includes('```html')) {
+        userText = `用户之前创建了以下应用，请按需求修改它。\n\`\`\`html\n${appEditHtml}\n\`\`\`\n\n用户需求：${text}`
+      }
+      setPendingAppCode(null)
       const allMessages = [
         { role: 'system' as const, content: systemContent },
         ...messages.map(m => {
@@ -437,7 +799,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           }
           return { role: m.role as 'user' | 'assistant', content: m.content }
         }),
-        { role: 'user' as const, content: userContent || text },
+        { role: 'user' as const, content: userContent || userText },
       ]
 
       const params = completionParams || {}
@@ -454,6 +816,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             setMessages(prev => prev.map(msg =>
               msg.id === assistantId ? { ...msg, content, reasoningContent } : msg,
             ))
+          }
+          // Streaming htmlCode extraction for live app preview
+          if (content && content.includes('```html')) {
+            const streamMatch = content.match(/```html\n([\s\S]*)$/)
+            if (streamMatch) {
+              setMessages(prev => prev.map(msg =>
+                msg.id === assistantId ? { ...msg, htmlCode: streamMatch[1] } : msg,
+              ))
+            }
           }
           if (reasoningContent && reasoningPreferenceRef.current && !autoExpandedRef.current) {
             autoExpandedRef.current = true
@@ -480,8 +851,20 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       stopRef.current = null
 
       const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
+      const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
+      const extractedHtml = htmlMatch?.[1]
+      if (extractedHtml) {
+        latestHtmlRef.current = extractedHtml
+        editAppCodeRef.current = ''
+        // Auto-save
+        const appId = `app_${Date.now()}`
+        const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
+        const appName = editAppNameRef.current || nameMatch?.[1] || 'Generated App'
+        saveApp(appId, appName, extractedHtml).catch(() => {})
+        editAppNameRef.current = ''
+      }
       setMessages(prev => prev.map(msg =>
-        msg.id === assistantId ? { ...msg, content: finalContent, searchResults: searchHits || undefined, timings: completionResult.timings } : msg,
+        msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: extractedHtml || msg.htmlCode, searchResults: searchHits || undefined, timings: completionResult.timings } : msg,
       ))
 
       // TTS: speak remaining buffered text
@@ -509,7 +892,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     } finally {
       setIsStreaming(false)
     }
-  }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine, ttsEngine, ttsAutoSpeak, ttsSpeed])
+  }, [inputText, isStreaming, context, messages, completionParams, searchEnabled, searchEngine, ttsEngine, ttsAutoSpeak, ttsSpeed, isAppMode, pendingAppCode])
 
   const handleStopRecording = useCallback(async () => {
     if (!recordingRef.current) { setIsRecording(false); return }
@@ -568,8 +951,9 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const completionResult = await promise
       stopRef.current = null
       const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
+      const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
       setMessages(prev => prev.map(msg =>
-        msg.id === assistantId ? { ...msg, content: finalContent, timings: completionResult.timings } : msg,
+        msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: htmlMatch?.[1] || msg.htmlCode, timings: completionResult.timings } : msg,
       ))
     } catch (error: any) {
       Alert.alert(t.common.error, error.message)
@@ -729,6 +1113,25 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       return
     }
 
+    // App mode: delegate to tool-based completion
+    if (isAppMode) {
+      const cfg = appGenConfigRef.current
+      if (cfg.mode === 'complex' && projectIdRef.current) {
+        const project = await projectStorage.getProjectMeta(projectIdRef.current)
+        if (project) {
+          const assistantId = `assistant_${Date.now()}`
+          const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
+          setMessages(prev => {
+            const before = prev.slice(0, userMsgIndex + 1)
+            const after = prev.slice(userMsgIndex + 2)
+            return [...before, assistantMsg, ...after]
+          })
+          await startAppModeCompletion(userMsg.content, userMsg, assistantId, { id: project.id, name: project.name })
+          return
+        }
+      }
+    }
+
     const assistantId = `assistant_${Date.now()}`
     const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
 
@@ -743,7 +1146,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     try {
       const msgs = messages.slice(0, userMsgIndex + 1)
       const allMessages = [
-        { role: 'system' as const, content: DEFAULT_SYSTEM_PROMPT },
+        { role: 'system' as const, content: isAppMode ? getEffectivePrompt(appGenConfigRef.current) : DEFAULT_SYSTEM_PROMPT },
         ...msgs.map(m => {
           if ((m as any).imageData) {
             return {
@@ -806,8 +1209,9 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       stopRef.current = null
 
       const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text)
+      const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
       setMessages(prev => prev.map(msg =>
-        msg.id === assistantId ? { ...msg, content: finalContent, timings: completionResult.timings } : msg,
+        msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: htmlMatch?.[1] || msg.htmlCode, timings: completionResult.timings } : msg,
       ))
 
       // TTS: speak remaining buffered text
@@ -830,7 +1234,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     } finally {
       setIsStreaming(false)
     }
-  }, [context, messages, completionParams, ttsEngine, ttsAutoSpeak, ttsSpeed])
+  }, [context, messages, completionParams, ttsEngine, ttsAutoSpeak, ttsSpeed, isAppMode, startAppModeCompletion])
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
     const isUser = item.role === 'user'
@@ -854,11 +1258,11 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         onLongPress={handleLongPress}
         delayLongPress={500}
         style={({ pressed }) => ({
-          alignSelf: isUser ? 'flex-end' : 'flex-start',
-          maxWidth: '80%',
+          alignSelf: isUser ? 'flex-end' : (item.htmlCode ? 'stretch' : 'flex-start'),
+          maxWidth: '100%',
           minWidth: isUser ? undefined : 180,
           marginVertical: 4,
-          marginHorizontal: 16,
+          marginHorizontal: item.htmlCode ? 0 : 16,
           borderRadius: 16,
           backgroundColor: isUser ? colors.card : '#000000',
           overflow: 'hidden',
@@ -942,11 +1346,13 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                 ))}
               </View>
             )}
-            <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+            <View style={{ paddingHorizontal: item.htmlCode ? 0 : 14, paddingVertical: item.htmlCode ? 0 : 10 }}>
               {item.imageData && (
                 <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
               )}
-              {item.audioData ? (
+              {item.htmlCode ? (
+                <AppPreview html={item.htmlCode} onAIMessage={handleAIMessage} defaultTab="code" onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: item.htmlCode })} />
+              ) : item.audioData ? (
                 <TouchableOpacity onPress={() => handlePlayAudio(item.id, item.audioData!)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={{ fontSize: 24 }}>{playingAudioId === item.id ? '🔊' : '🔈'}</Text>
                   <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 14 }}>{playingAudioId === item.id ? '播放中...' : '点击播放音频'}</Text>
@@ -1115,6 +1521,112 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               </View>
             )}
 
+            {/* 待发送应用代码预览 */}
+            {pendingAppCode && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+                <Text style={{ fontSize: 16, marginRight: 6 }}>📱</Text>
+                <Text style={{ flex: 1, color: colors.text, fontSize: 13 }} numberOfLines={1}>
+                  {(t as any).appgen?.editing || '编辑应用'}：{pendingAppCode.name}
+                </Text>
+                <TouchableOpacity onPress={() => { setPendingAppCode(null); setIsAppMode(false) }}>
+                  <Text style={{ color: colors.error, fontSize: 16 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* App 模式 Tab 栏（仅复杂模式） */}
+            {isAppMode && appGenConfigRef.current.mode === 'complex' && (
+              <View>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}
+                  contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                >
+                  <TouchableOpacity
+                    style={[appTabBtn, activeAppTab === 'dialogue' && { backgroundColor: colors.primary }]}
+                    onPress={() => setActiveAppTab('dialogue')}
+                  >
+                    <Text style={[appTabBtnText, { color: activeAppTab === 'dialogue' ? '#FFF' : colors.textSecondary }]}>💬 {(t as any).appgen?.dialogue || '对话'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[appTabBtn, activeAppTab === 'preview' && { backgroundColor: colors.primary }]}
+                    onPress={() => setActiveAppTab('preview')}
+                  >
+                    <Text style={[appTabBtnText, { color: activeAppTab === 'preview' ? '#FFF' : colors.textSecondary }]}>👁 {(t as any).appgen?.preview || '预览'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[appTabBtn, activeAppTab === 'filetree' && { backgroundColor: colors.primary }]}
+                    onPress={() => {
+                      setActiveAppTab('filetree')
+                      if (projectIdRef.current) {
+                        projectStorage.listProjectFiles(projectIdRef.current).then(files => {
+                          setAppFileTabs(files.filter(f => f !== '.meta.json'))
+                        }).catch(() => {})
+                      }
+                    }}
+                  >
+                    <Text style={[appTabBtnText, { color: activeAppTab === 'filetree' ? '#FFF' : colors.textSecondary }]}>📁 {(t as any).appgen?.files || '文件'}</Text>
+                  </TouchableOpacity>
+                  {appFileTabs.map(file => (
+                    <TouchableOpacity
+                      key={file}
+                      style={[appTabBtn, activeAppTab === file && { backgroundColor: colors.primary }]}
+                      onPress={() => setActiveAppTab(file)}
+                    >
+                      <Text style={[appTabBtnText, { color: activeAppTab === file ? '#FFF' : colors.textSecondary }]}>📄 {file.split('/').pop()}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {/* Tab 内容区 */}
+                {activeAppTab === 'preview' && (
+                  <View style={{ height: 300, padding: 8 }}>
+                    <AppPreview html={latestHtmlRef.current || ''} />
+                  </View>
+                )}
+                {activeAppTab === 'filetree' && (
+                  <View style={{ maxHeight: 200, padding: 8 }}>
+                    {appFileTabs.length === 0 ? (
+                      <Text style={{ color: colors.textSecondary, fontSize: 13, padding: 8 }}>暂无文件</Text>
+                    ) : (
+                      <ScrollView style={{ maxHeight: 180 }}>
+                        {appFileTabs.map(file => (
+                          <TouchableOpacity
+                            key={file}
+                            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8 }}
+                            onPress={() => setActiveAppTab(file)}
+                          >
+                            <Text style={{ fontSize: 14, marginRight: 6 }}>
+                              {file.includes('/') ? '📁' : '📄'}
+                            </Text>
+                            <Text style={{ color: colors.text, fontSize: 13 }}>{file}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    )}
+                  </View>
+                )}
+                {activeAppTab !== 'dialogue' && activeAppTab !== 'preview' && activeAppTab !== 'filetree' && (
+                  <View style={{ maxHeight: 200, padding: 8 }}>
+                    <CodePreview code={fileTabContent} language={activeAppTab.endsWith('.css') ? 'css' : activeAppTab.endsWith('.js') ? 'javascript' : 'html'} />
+                  </View>
+                )}
+                {/* 待办列表 */}
+                {appTodos.length > 0 && (
+                  <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: 12, paddingVertical: 6 }}>
+                    {appTodos.map(todo => (
+                      <View key={todo.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}>
+                        <Text style={{ fontSize: 12, marginRight: 6 }}>
+                          {todo.status === 'done' ? '✅' : todo.status === 'running' ? '🔄' : todo.status === 'error' ? '❌' : '⏳'}
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{todo.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* 第1行：编辑框 / 语音按钮 */}
             {isVoiceMode ? (
               <Pressable
@@ -1155,6 +1667,17 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                   style={{ width: 22, height: 22, opacity: searchEnabled ? 1 : 0.4 }}
                   resizeMode="contain"
                 />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleAppModeToggle}
+                style={{
+                  paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, marginLeft: 6,
+                  backgroundColor: isAppMode ? colors.primary : 'transparent',
+                  borderWidth: 1, borderColor: isAppMode ? colors.primary : colors.border,
+                }}
+              >
+                <Text style={{ color: isAppMode ? '#FFF' : colors.textSecondary, fontSize: 13, fontWeight: '600' }}>App</Text>
               </TouchableOpacity>
 
               <View style={{ flex: 1 }} />
@@ -1255,6 +1778,20 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setShowHistory(false)} />
           <View style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '75%', backgroundColor: colors.surface, paddingTop: insets.top + 60 }}>
+            <TouchableOpacity
+              style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center' }}
+              onPress={() => { setShowHistory(false); navigation.getParent()?.navigate('AppGenSettings') }}
+            >
+              <Text style={{ fontSize: 18, marginRight: 10 }}>⚙️</Text>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{(t as any).appgen?.settingsTitle || '应用创建设置'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', alignItems: 'center' }}
+              onPress={() => { setShowHistory(false); navigation.getParent()?.navigate('AppGallery') }}
+            >
+              <Text style={{ fontSize: 18, marginRight: 10 }}>📱</Text>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{(t as any).appgen?.title || '应用画廊'}</Text>
+            </TouchableOpacity>
             <View style={{ paddingHorizontal: 16, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: colors.border }}>
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>{t.chat.history}</Text>
             </View>
@@ -1326,4 +1863,11 @@ function FloatingMenuItem({ icon, label, destructive, onPress }: { icon: string;
       <Text style={{ fontSize: 15, color: destructive ? theme.colors.error : theme.colors.text }}>{label}</Text>
     </TouchableOpacity>
   )
+}
+
+const appTabBtn: any = {
+  paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginHorizontal: 3,
+}
+const appTabBtnText: any = {
+  fontSize: 13, fontWeight: '600',
 }

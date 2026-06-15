@@ -3,7 +3,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack'
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
 
 export type TabParamList = {
-  HomeTab: undefined
+  HomeTab: { editAppCode?: string; editAppName?: string; editProjectId?: string } | undefined
   ModelTab: undefined
   ServerTab: undefined
   SettingsTab: undefined
@@ -24,6 +24,9 @@ export type RootStackParamList = {
   APISetup: undefined
   ChatHistory: undefined
   ModelSettings: undefined
+  AppGallery: undefined
+  AppViewer: { htmlCode: string; name?: string }
+  AppGenSettings: undefined
 }
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =

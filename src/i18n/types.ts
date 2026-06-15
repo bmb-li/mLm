@@ -110,6 +110,26 @@ export type TranslationStrings = {
     autoSpeak: string
     speed: string
   }
+  appgen: {
+    title: string
+    preview: string
+    code: string
+    fullscreen: string
+    copyCode: string
+    editing: string
+    dialogue: string
+    appPrompt: string
+    appPromptDesc: string
+    settingsTitle: string
+    mode: string
+    modeSimple: string
+    modeSimpleDesc: string
+    modeComplex: string
+    modeComplexDesc: string
+    systemPrompt: string
+    restoreDefault: string
+    saved: string
+  }
   server: {
     title: string
     statusRunning: string
