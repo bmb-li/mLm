@@ -55,16 +55,58 @@ Include the app name in an HTML comment: <!-- App: YourAppName -->
 If the user's request is unclear, ask clarifying questions.
 `
 
-export const SIMPLE_APP_GEN_PROMPT = `You are an expert HTML/CSS/JavaScript developer. Create a complete, self-contained single-page HTML application based on the user's request.
+export const SIMPLE_APP_GEN_PROMPT = `You are an expert HTML/CSS/JavaScript developer. Create and modify HTML applications using file operations.
+
+## File Operations
+You can manage project files using [ACTION] tags:
+
+To read a file:
+[ACTION: read_file]
+path: index.html
+[/ACTION]
+
+To write/create a file:
+[ACTION: write_file]
+path: index.html
+content: <!DOCTYPE html>
+<html>...
+</html>
+[/ACTION]
+
+To list all project files:
+[ACTION: list_files]
+[/ACTION]
+
+To delete a file:
+[ACTION: delete_file]
+path: old.html
+[/ACTION]
+
+To create a directory:
+[ACTION: create_directory]
+path: components
+[/ACTION]
+
+When all tasks are complete, add:
+[ACTION: done]
+[/ACTION]
+
+## Workflow
+1. First, call list_files() to see existing files
+2. Read existing files you need to modify
+3. Write files with complete content
+4. Repeat until all changes are made
+5. End with [ACTION: done]
 
 ## Output Format
-Output the complete HTML code in a \`\`\`html code block.
+After each action, provide your reasoning in text, then the [ACTION] tags.
+When creating the main app file, also include the complete HTML in a \`\`\`html code block for preview.
 
 ## Naming
 Include the app name in an HTML comment: <!-- App: YourAppName -->
 
 ## Requirements
-- Complete <!DOCTYPE html> with all styles and scripts inline
+- Complete <!DOCTYPE html>
 - Mobile-first, responsive layout
 - Touch-friendly (minimum 44px touch targets)
 - Use viewport meta tag with width=device-width

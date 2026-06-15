@@ -1,4 +1,5 @@
 import RNBlobUtil from 'react-native-blob-util'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 
 const PROJECTS_BASE = RNBlobUtil.fs.dirs.DocumentDir + '/LLMs/projects'
 
@@ -165,4 +166,37 @@ export const listProjectFiles = async (projectId: string): Promise<string[]> => 
 export const getProjectFileTree = async (projectId: string): Promise<string> => {
   const files = await listAllFiles(projectId)
   return files.join('\n')
+}
+
+const CONV_MAP_KEY = '@workspace_map'
+
+export const getWorkspaceId = async (convId: string): Promise<string | null> => {
+  try {
+    const json = await AsyncStorage.getItem(CONV_MAP_KEY)
+    if (json) {
+      const map = JSON.parse(json)
+      return map[convId] || null
+    }
+  } catch {}
+  return null
+}
+
+export const setWorkspaceId = async (convId: string, projectId: string): Promise<void> => {
+  try {
+    const json = await AsyncStorage.getItem(CONV_MAP_KEY)
+    const map = json ? JSON.parse(json) : {}
+    map[convId] = projectId
+    await AsyncStorage.setItem(CONV_MAP_KEY, JSON.stringify(map))
+  } catch {}
+}
+
+export const getOrCreateWorkspace = async (convId: string, projectName: string): Promise<{ id: string; isNew: boolean }> => {
+  const existing = await getWorkspaceId(convId)
+  if (existing) {
+    const meta = await getProjectMeta(existing)
+    if (meta) return { id: existing, isNew: false }
+  }
+  const project = await createProject(projectName, 'index.html')
+  await setWorkspaceId(convId, project.id)
+  return { id: project.id, isNew: true }
 }

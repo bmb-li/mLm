@@ -32,10 +32,11 @@ import { executeToolCalls } from '../services/appgen/toolEngine'
 import * as projectStorage from '../services/appgen/projectStorage'
 import { log } from '../services/appgen/logger'
 import { loadConfig, getEffectivePrompt, type AppGenConfig } from '../services/appgen/appModeStorage'
+import { parseActions, stripActionTags } from '../services/appgen/actionParser'
 
 interface ChatMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
   reasoningContent?: string
   searchResults?: SearchResult[]
@@ -602,6 +603,158 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
   }, [context, messages, completionParams])
 
+  // Simple mode action-based completion
+  const handleSimpleModeCompletion = useCallback(async (
+    userText: string,
+    assistantId: string,
+    projectId: string,
+  ) => {
+    if (!context) { Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage); return }
+    setIsStreaming(true)
+    autoExpandedRef.current = false
+
+    try {
+      const fileTree = await projectStorage.getProjectFileTree(projectId)
+      const projectMeta = await projectStorage.getProjectMeta(projectId)
+      const systemContent = (appGenConfigRef.current.mode === 'simple'
+        ? getEffectivePrompt(appGenConfigRef.current)
+        : APP_GEN_PROMPT) + `\n\nCurrent project "${projectMeta?.name || 'App'}" files:\n${fileTree}\n\n`
+
+      let allMessages: any[] = [
+        { role: 'system' as const, content: systemContent },
+        ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        { role: 'user' as const, content: userText },
+      ]
+
+      const params = completionParams || {}
+      let loopCount = 0
+      const maxLoops = 20
+
+      while (loopCount < maxLoops) {
+        loopCount++
+        const loopId = loopCount > 1 ? `assistant_${Date.now()}_${loopCount}` : assistantId
+
+        if (loopCount > 1) {
+          const newMsg: ChatMessage = { id: loopId, role: 'assistant', content: '' }
+          setMessages(prev => [...prev, newMsg])
+        }
+
+        const completionResult = await context.completion(
+          { ...params, messages: allMessages, reasoning_format: 'auto' },
+          (_data: any) => {
+            const content = _data.content || ''
+            if (content) {
+              setMessages(prev => prev.map(msg =>
+                msg.id === loopId ? { ...msg, content } : msg,
+              ))
+            }
+            if (content && content.includes('```html')) {
+              const sm = content.match(/```html\n([\s\S]*)$/)
+              if (sm) {
+                latestHtmlRef.current = sm[1]
+                setMessages(prev => prev.map(msg =>
+                  msg.id === loopId ? { ...msg, htmlCode: sm[1] } : msg,
+                ))
+              }
+            }
+          },
+        )
+
+        const finalContent = completionResult.interrupted
+          ? completionResult.text
+          : (completionResult.content || completionResult.text || '')
+        const actions = parseActions(finalContent)
+        const displayContent = stripActionTags(finalContent)
+
+        if (displayContent) {
+          setMessages(prev => prev.map(msg =>
+            msg.id === loopId ? { ...msg, content: displayContent } : msg,
+          ))
+        }
+
+        // Extract htmlCode for preview (if present in final content)
+        const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
+        const extractedHtml = htmlMatch?.[1]
+        if (extractedHtml) {
+          latestHtmlRef.current = extractedHtml
+          setMessages(prev => prev.map(msg =>
+            msg.id === loopId ? { ...msg, htmlCode: extractedHtml } : msg,
+          ))
+        }
+
+        if (actions.length === 0 || actions.some(a => a.type === 'done')) break
+
+        // Execute actions
+        let resultLines: string[] = []
+        for (const action of actions) {
+          try {
+            switch (action.type) {
+              case 'read_file':
+                resultLines.push(`[${action.path}]\n${await projectStorage.readFile(projectId, action.path!)}`)
+                break
+              case 'write_file':
+                await projectStorage.writeFile(projectId, action.path!, action.content || '')
+                resultLines.push(`Written: ${action.path}`)
+                break
+              case 'delete_file':
+                await projectStorage.deleteFile(projectId, action.path!)
+                resultLines.push(`Deleted: ${action.path}`)
+                break
+              case 'list_files':
+                resultLines.push((await projectStorage.listProjectFiles(projectId)).join('\n') || '(empty)')
+                break
+              case 'create_directory':
+                await projectStorage.createDirectory(projectId, action.path!)
+                resultLines.push(`Created dir: ${action.path}`)
+                break
+            }
+          } catch (e: any) {
+            resultLines.push(`Error: ${e.message}`)
+          }
+        }
+
+        const resultText = resultLines.join('\n')
+
+        // Add system message for feedback
+        const systemId = `system_${Date.now()}`
+        const systemMsg: ChatMessage = { id: systemId, role: 'system', content: `Action results:\n${resultText}` }
+        setMessages(prev => [...prev, systemMsg])
+
+        // Add to allMessages for next loop
+        allMessages = [
+          ...allMessages,
+          { role: 'assistant' as const, content: displayContent || finalContent },
+          { role: 'system' as const, content: resultText },
+        ]
+
+        // Refresh file tabs
+        const updatedFiles = await projectStorage.listProjectFiles(projectId)
+        setAppFileTabs(updatedFiles.filter(f => f !== '.meta.json'))
+      }
+
+      // Final: read main file for preview
+      try {
+        const meta = projectMeta || await projectStorage.getProjectMeta(projectId)
+        if (meta) {
+          const mainCode = await projectStorage.readFile(projectId, meta.mainFile)
+          latestHtmlRef.current = mainCode
+          setMessages(prev => prev.map(msg =>
+            msg.id === assistantId ? { ...msg, htmlCode: mainCode } : msg,
+          ))
+        }
+      } catch {}
+
+    } catch (error: any) {
+      if (error?.message?.toLowerCase().includes('model')) {
+        Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
+      } else {
+        Alert.alert(t.common.error, error?.message || '未知错误')
+      }
+    } finally {
+      setIsStreaming(false)
+    }
+  }, [context, messages, completionParams])
+
   const handleSend = useCallback(async (mediaOverride?: typeof pendingMedia) => {
     const text = inputText.trim()
     const media = mediaOverride || pendingMedia
@@ -663,60 +816,14 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         const projectMeta = projectId ? await projectStorage.getProjectMeta(projectId) : null
         await startAppModeCompletion(text, userMsg, assistantId, { id: projectId || '', name: projectMeta?.name || appName })
       } else {
-        // Simple mode: use APP_GEN_PROMPT with regular completion (no tools, no tabs)
+        // Simple mode: get/create workspace and use action-based completion
+        const ws = await projectStorage.getOrCreateWorkspace(route.params?.editProjectId || 'default', appName)
+        projectIdRef.current = ws.id
         setIsStreaming(true)
-        autoExpandedRef.current = false
         try {
-          const systemContent = getEffectivePrompt(cfg)
-          const allMessages = [
-            { role: 'system' as const, content: systemContent },
-            ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-            { role: 'user' as const, content: text },
-          ]
-          const params = completionParams || {}
-          const { promise, stop } = await context.parallel.completion(
-            { ...params, messages: allMessages, reasoning_format: 'auto' },
-            (_reqId: number, data: any) => {
-              const content = data.content || ''
-              if (content) {
-                setMessages(prev => prev.map(msg =>
-                  msg.id === assistantId ? { ...msg, content } : msg,
-                ))
-              }
-              if (content && content.includes('```html')) {
-                const sm = content.match(/```html\n([\s\S]*)$/)
-                if (sm) {
-                  setMessages(prev => prev.map(msg =>
-                    msg.id === assistantId ? { ...msg, htmlCode: sm[1] } : msg,
-                  ))
-                }
-              }
-            },
-          )
-          stopRef.current = stop
-          const result = await promise
-          stopRef.current = null
-          const finalContent = result.interrupted ? result.text : (result.content || result.text || '')
-          const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
-          const extractedHtml = htmlMatch?.[1]
-          setMessages(prev => prev.map(msg =>
-            msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: extractedHtml || msg.htmlCode } : msg,
-          ))
-          // Save to gallery
-          if (extractedHtml) {
-            try {
-              const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
-              const appName = nameMatch?.[1] || 'Generated App'
-              const project = await projectStorage.createProject(appName, 'index.html', { 'index.html': extractedHtml })
-              projectIdRef.current = project.id
-            } catch {}
-          }
-        } catch (error: any) {
-          if (error?.message?.toLowerCase().includes('model')) {
-            Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
-          } else {
-            Alert.alert(t.common.error, error?.message || '未知错误')
-          }
+          await handleSimpleModeCompletion(text, assistantId, ws.id)
+        } catch (e: any) {
+          Alert.alert(t.common.error, e?.message || '未知错误')
         } finally {
           setIsStreaming(false)
         }
@@ -1254,6 +1361,14 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
 
     return (
+      item.role === 'system' ? (
+        <View style={{ marginVertical: 4, marginHorizontal: 16, overflow: 'hidden' }}>
+          <View style={{ padding: 10, backgroundColor: colors.surface, borderRadius: 8, borderLeftWidth: 3, borderLeftColor: '#888' }}>
+            <Text style={{ fontSize: 11, color: '#888', marginBottom: 4, fontWeight: '600' }}>⚙️ system</Text>
+            <Text style={{ fontSize: 13, color: colors.textSecondary, fontFamily: 'monospace', lineHeight: 18 }} selectable>{item.content}</Text>
+          </View>
+        </View>
+      ) : (
       <Pressable
         onLongPress={handleLongPress}
         delayLongPress={500}
@@ -1430,6 +1545,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         </View>
           )}
       </Pressable>
+      )
     )
   }
 
