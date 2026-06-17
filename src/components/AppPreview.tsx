@@ -1,11 +1,12 @@
 import React, { useRef, useState, useCallback } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput, Modal } from 'react-native'
 import { WebView, type WebViewMessageEvent } from 'react-native-webview'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
 import { injectBridge, commonWebViewProps } from '../services/appgen/bridge'
 import CodePreview from './CodePreview'
+import * as projectStorage from '../services/appgen/projectStorage'
 
 interface AppPreviewProps {
   html: string
@@ -13,9 +14,10 @@ interface AppPreviewProps {
   defaultTab?: 'preview' | 'code'
   onFullscreen?: () => void
   onAIMessage?: (msg: any, postMessage: (data: any) => void) => Promise<any>
+  onSave?: (type: 'replace' | 'create', name: string, html: string) => void
 }
 
-export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIMessage }: AppPreviewProps) {
+export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIMessage, onSave }: AppPreviewProps) {
   const { theme } = useTheme()
   const { t } = useI18n()
   const colors = theme.colors
@@ -24,6 +26,9 @@ export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIM
   const [codeHeight, setCodeHeight] = useState(800)
   const [renderError, setRenderError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [showSave, setShowSave] = useState(false)
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [saveName, setSaveName] = useState('')
   const webViewRef = useRef<WebView>(null)
 
   const postToWebView = useCallback((data: any) => {
@@ -60,6 +65,39 @@ export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIM
 
   const injectedHtml = injectBridge(html)
 
+  const handleSave = useCallback(() => {
+    setSaveName('')
+    setShowCreateForm(false)
+    setShowSave(true)
+  }, [])
+
+  const confirmSave = useCallback(async () => {
+    const name = saveName.trim() || 'Generated App'
+    try {
+      const nameMatch = html.match(/<!--\s*App:\s*(.+?)\s*-->/)
+      const appName = nameMatch?.[1] || name
+      await projectStorage.createProject(appName, 'index.html', { 'index.html': html })
+      setShowSave(false)
+      Alert.alert('', (t as any).appgen?.saved || '已保存到画廊')
+    } catch {}
+  }, [saveName, html])
+
+  const handleReplace = useCallback(() => {
+    const name = saveName.trim() || 'Generated App'
+    const nameMatch = html.match(/<!--\s*App:\s*(.+?)\s*-->/)
+    const appName = nameMatch?.[1] || name
+    onSave?.('replace', appName, html)
+    setShowSave(false)
+  }, [saveName, html, onSave])
+
+  const handleCreateNew = useCallback(() => {
+    const name = saveName.trim() || 'Generated App'
+    const nameMatch = html.match(/<!--\s*App:\s*(.+?)\s*-->/)
+    const appName = nameMatch?.[1] || name
+    onSave?.('create', appName, html)
+    setShowSave(false)
+  }, [saveName, html, onSave])
+
   return (
     <View style={[styles.container, fill && { flex: 1, alignSelf: 'stretch', marginVertical: 0 }, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       {/* Tab bar */}
@@ -79,6 +117,9 @@ export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIM
           <Text style={[styles.tabText, { color: !showPreview ? colors.primary : colors.textSecondary }]}>
             {(t as any).appgen?.code || 'Code'}
           </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.fullBtn} onPress={handleSave}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13 }}>💾 {(t as any).appgen?.saveGallery || '保存'}</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }} />
         {showPreview ? (
@@ -135,6 +176,51 @@ export default function AppPreview({ html, fill, defaultTab, onFullscreen, onAIM
           <CodePreview code={html} onHeightChange={setCodeHeight} style={fill ? { flex: 1 } : { height: codeHeight }} />
         </View>
       )}
+
+      {/* Save to gallery modal */}
+      <Modal visible={showSave} transparent animationType="fade" onRequestClose={() => setShowSave(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setShowSave(false)}>
+          <TouchableOpacity activeOpacity={1} style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 24, minWidth: 260 }}>
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600', marginBottom: 16 }}>{(t as any).appgen?.saveToGallery || '保存到画廊'}</Text>
+
+            {!showCreateForm ? (
+              <View style={{ flexDirection: 'column', gap: 12 }}>
+                <TouchableOpacity onPress={handleReplace} style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.primary, borderRadius: 8, alignItems: 'center' }}>
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '600' }}>🔄 {(t as any).appgen?.replaceApp || '替换当前应用'}</Text>
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                  <Text style={{ marginHorizontal: 12, color: colors.textSecondary, fontSize: 13 }}>{(t as any).common?.or || '或'}</Text>
+                  <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                </View>
+                <TouchableOpacity onPress={() => setShowCreateForm(true)} style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.surface, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: colors.primary }}>
+                  <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '600' }}>➕ {(t as any).appgen?.createNewApp || '创建新应用'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowSave(false)} style={{ paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 15 }}>{(t as any).common?.cancel || '取消'}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'column', gap: 12 }}>
+                <TextInput
+                  value={saveName}
+                  onChangeText={setSaveName}
+                  placeholder={(t as any).appgen?.saveNamePlaceholder || '应用名称'}
+                  placeholderTextColor={colors.textSecondary}
+                  autoFocus
+                  style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, color: colors.text, fontSize: 15 }}
+                />
+                <TouchableOpacity onPress={handleCreateNew} style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.primary, borderRadius: 8, alignItems: 'center' }}>
+                  <Text style={{ color: '#FFF', fontSize: 15, fontWeight: '600' }}>{(t as any).common?.save || '保存'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setShowCreateForm(false)} style={{ paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 15 }}>{(t as any).common?.back || '返回'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
     </View>
   )
 }

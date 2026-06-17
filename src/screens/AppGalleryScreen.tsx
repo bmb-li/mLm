@@ -1,26 +1,47 @@
 import React, { useState, useCallback } from 'react'
-import { View, Text, TouchableOpacity, FlatList, Alert, TextInput, Modal, StyleSheet, SafeAreaView } from 'react-native'
-import { useFocusEffect } from '@react-navigation/native'
+import { View, Text, TouchableOpacity, FlatList, Alert, TextInput, Modal, StyleSheet, SafeAreaView, Dimensions } from 'react-native'
+import { WebView } from 'react-native-webview'
+import { useFocusEffect, useRoute } from '@react-navigation/native'
 import { useTheme } from '../contexts/ThemeContext'
 import * as projectStorage from '../services/appgen/projectStorage'
 import type { ProjectMeta } from '../services/appgen/projectStorage'
+import { injectBridge } from '../services/appgen/bridge'
+
+const SCREEN_W = Dimensions.get('window').width
 
 export default function AppGalleryScreen({ navigation }: any) {
   const { theme } = useTheme()
   const colors = theme.colors
+  const route = useRoute()
+  const selectMode = (route.params as any)?.selectMode === true
   const [apps, setApps] = useState<ProjectMeta[]>([])
   const [menuApp, setMenuApp] = useState<ProjectMeta | null>(null)
   const [renameVis, setRenameVis] = useState(false)
   const [renameText, setRenameText] = useState('')
+  const [htmlCache, setHtmlCache] = useState<Record<string, string>>({})
 
   useFocusEffect(useCallback(() => {
-    projectStorage.listProjects().then(setApps)
+    projectStorage.listProjects().then(async (list) => {
+      setApps(list)
+      const cache: Record<string, string> = {}
+      await Promise.all(list.map(async (app) => {
+        try { cache[app.id] = await projectStorage.readFile(app.id, app.mainFile) } catch {}
+      }))
+      setHtmlCache(cache)
+    })
   }, []))
 
   const handleOpen = async (meta: ProjectMeta) => {
     try {
       const code = await projectStorage.readFile(meta.id, meta.mainFile)
-      navigation.navigate('AppViewer', { htmlCode: code, name: meta.name })
+      if (selectMode) {
+        navigation.navigate('MainTabs', {
+          screen: 'HomeTab',
+          params: { loadProjectId: meta.id },
+        })
+      } else {
+        navigation.navigate('AppViewer', { htmlCode: code, name: meta.name })
+      }
     } catch {
       Alert.alert('错误', '无法读取应用文件')
     }
@@ -56,6 +77,14 @@ export default function AppGalleryScreen({ navigation }: any) {
     setRenameVis(false); setMenuApp(null)
   }
 
+  const handleLoadWorkspace = (meta: ProjectMeta) => {
+    navigation.navigate('MainTabs', {
+      screen: 'HomeTab',
+      params: { loadProjectId: meta.id },
+    })
+    setMenuApp(null)
+  }
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -78,7 +107,27 @@ export default function AppGalleryScreen({ navigation }: any) {
               onPress={() => handleOpen(item)}
               onLongPress={() => { setMenuApp(item) }}
             >
-              <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+              {htmlCache[item.id] ? (
+                <View style={styles.previewWrap}>
+                  <WebView
+                    source={{ html: injectBridge(htmlCache[item.id] || '') }}
+                    style={styles.previewWebView}
+                    scrollEnabled={false}
+                    javaScriptEnabled={true}
+                    domStorageEnabled={true}
+                    originWhitelist={['*']}
+                    showsVerticalScrollIndicator={false}
+                    showsHorizontalScrollIndicator={false}
+                  />
+                </View>
+              ) : (
+                <View style={[styles.previewWrap, { backgroundColor: colors.inputBackground, justifyContent: 'center', alignItems: 'center' }]}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 20, opacity: 0.3 }}>
+                    {item.name.slice(0, 2) || '📄'}
+                  </Text>
+                </View>
+              )}
+              <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
               <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>
                 {new Date(item.createdAt).toLocaleDateString()}
               </Text>
@@ -137,8 +186,10 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '700' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   grid: { padding: 8 },
-  card: { flex: 1, margin: 6, borderRadius: 12, borderWidth: 1, padding: 16, minHeight: 100, justifyContent: 'center' },
-  cardTitle: { fontSize: 14, fontWeight: '600' },
+  card: { flex: 1, margin: 6, borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
+  cardTitle: { fontSize: 13, fontWeight: '600', paddingHorizontal: 10, paddingVertical: 8 },
+  previewWrap: { height: 130, overflow: 'hidden' },
+  previewWebView: { width: '100%', height: 130, backgroundColor: 'transparent' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
   menu: { borderRadius: 16, padding: 20, minWidth: 200 },
   menuItem: { paddingVertical: 12 },

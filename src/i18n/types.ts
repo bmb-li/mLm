@@ -118,6 +118,11 @@ export type TranslationStrings = {
     copyCode: string
     editing: string
     dialogue: string
+    saveGallery: string
+    saveToGallery: string
+    saveNamePlaceholder: string
+    replaceApp: string
+    createNewApp: string
     appPrompt: string
     appPromptDesc: string
     settingsTitle: string

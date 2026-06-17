@@ -71,6 +71,30 @@ function formatTokenCount(value?: number) {
   return value === 0 ? '0 tok' : `${value} tok`
 }
 
+interface ContentSegment {
+  type: 'text' | 'code'
+  content: string
+}
+
+function parseContentSegments(fullContent: string): ContentSegment[] {
+  const segments: ContentSegment[] = []
+  const re = /```html\n([\s\S]*?)```/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(fullContent)) !== null) {
+    if (m.index > last) {
+      segments.push({ type: 'text', content: fullContent.slice(last, m.index).trim() })
+    }
+    segments.push({ type: 'code', content: m[1] })
+    last = m.index + m[0].length
+  }
+  if (last < fullContent.length) {
+    const rest = fullContent.slice(last).trim()
+    if (rest) segments.push({ type: 'text', content: rest })
+  }
+  return segments
+}
+
 export default function MainChatScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
   const { t } = useI18n()
@@ -87,6 +111,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const flatListRef = useRef<FlatList>(null)
   const insets = useSafeAreaInsets()
   const stopRef = useRef<(() => Promise<void>) | null>(null)
+  const abortRef = useRef(false)
   const reasoningPreferenceRef = useRef(false)
   const autoExpandedRef = useRef(false)
   const [actionMenuMsg, setActionMenuMsg] = useState<ChatMessage | null>(null)
@@ -134,6 +159,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
     if (editCode) {
       const name = route.params?.editAppName || 'Unnamed'
+      setWorkspaceName(name)
       setIsAppMode(true)
       setPendingAppCode({ code: editCode, name })
       editAppCodeRef.current = editCode
@@ -144,6 +170,32 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
   }, [route.params?.editAppCode])
 
+  // Load workspace from gallery selection
+  useEffect(() => {
+    const pid = route.params?.loadProjectId
+    if (pid) {
+      projectIdRef.current = pid
+      setIsAppMode(true)
+      navigation.setParams({ loadProjectId: undefined })
+      loadWorkspaceMeta(pid)
+    }
+  }, [route.params?.loadProjectId, navigation])
+
+  // Load workspace name when projectIdRef changes
+  const loadWorkspaceMeta = useCallback(async (pid: string) => {
+    try {
+      const meta = await projectStorage.getProjectMeta(pid)
+      if (meta) {
+        setWorkspaceName(meta.name)
+        const mainContent = await projectStorage.readFile(pid, meta.mainFile)
+        latestHtmlRef.current = mainContent
+        setWorkspacePreviewHtml(mainContent)
+      }
+      const files = await projectStorage.listProjectFiles(pid)
+      setAppFileTabs(files.filter(f => f !== '.meta.json'))
+    } catch {}
+  }, [])
+
   const { context, isModelReady, activeModelName, vocoderReady, loadModel } = useModelContext()
   const { value: customModels } = useStoredCustomModels()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
@@ -151,11 +203,14 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [showAttachMenu, setShowAttachMenu] = useState(false)
   const [pendingMedia, setPendingMedia] = useState<{ type: 'image' | 'audio'; data: string; mimeType: string } | null>(null)
   const [pendingAppCode, setPendingAppCode] = useState<{ code: string; name: string } | null>(null)
+  const [pendingContext, setPendingContext] = useState<{ filePath: string; content: string } | null>(null)
   const [activeAppTab, setActiveAppTab] = useState<'dialogue' | 'preview' | 'filetree' | string>('dialogue')
   const [appFileTabs, setAppFileTabs] = useState<string[]>([])
   const [fileTabContent, setFileTabContent] = useState('')
   const projectIdRef = useRef('')
   const [appTodos, setAppTodos] = useState<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'error' }[]>([])
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [workspacePreviewHtml, setWorkspacePreviewHtml] = useState('')
   const appGenConfigRef = useRef<AppGenConfig>({ mode: 'complex' })
   const [isVoiceMode, setIsVoiceMode] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -165,7 +220,10 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   // Load file content when a file tab is selected
   useEffect(() => {
     if (isAppMode && activeAppTab !== 'dialogue' && activeAppTab !== 'preview' && activeAppTab !== 'filetree' && projectIdRef.current) {
-      projectStorage.readFile(projectIdRef.current, activeAppTab).then(setFileTabContent).catch(() => setFileTabContent(''))
+      projectStorage.readFile(projectIdRef.current, activeAppTab).then(content => {
+        setFileTabContent(content)
+        setPendingContext({ filePath: activeAppTab, content })
+      }).catch(() => setFileTabContent(''))
     }
   }, [activeAppTab, isAppMode])
   // Clear todos when app mode exits
@@ -227,8 +285,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   }
 
   const handleStop = useCallback(() => {
+    abortRef.current = true
     stopRef.current?.()
-    setIsStreaming(false)
   }, [])
 
   const handleTakePhoto = useCallback(async () => {
@@ -434,6 +492,31 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     throw new Error('Unknown message type: ' + msg.type)
   }, [context])
 
+  const handleAppSave = useCallback(async (type: 'replace' | 'create', name: string, htmlCode: string) => {
+    try {
+      if (type === 'replace' && projectIdRef.current) {
+        await projectStorage.writeFile(projectIdRef.current, 'index.html', htmlCode)
+        const meta = await projectStorage.getProjectMeta(projectIdRef.current)
+        if (meta && meta.name !== name) {
+          await projectStorage.updateProjectName(projectIdRef.current, name)
+          setWorkspaceName(name)
+        }
+        setWorkspacePreviewHtml(htmlCode)
+        Alert.alert('', (t as any).appgen?.saved || '已保存')
+      } else {
+        const project = await projectStorage.createProject(name, 'index.html', { 'index.html': htmlCode })
+        projectIdRef.current = project.id
+        setWorkspaceName(project.name)
+        setWorkspacePreviewHtml(htmlCode)
+        const files = await projectStorage.listProjectFiles(project.id)
+        setAppFileTabs(files.filter(f => f !== '.meta.json'))
+        Alert.alert('', (t as any).appgen?.saved || '已保存')
+      }
+    } catch (e: any) {
+      Alert.alert('错误', e?.message || '保存失败')
+    }
+  }, [])
+
   const handleAppModeToggle = useCallback(async () => {
     if (isAppMode) {
       setIsAppMode(false)
@@ -479,6 +562,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       let currentAssistantId = assistantId
 
       while (loopCount < maxLoops) {
+        if (abortRef.current) { abortRef.current = false; break }
         loopCount++
         const loopId = currentAssistantId
         log('[APPMODE] Loop', { loopCount, messagesCount: allMessages.length, assistantId: loopId })
@@ -546,6 +630,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           }
         }
 
+        if (abortRef.current) { abortRef.current = false; break }
+
         if (toolCalls.length === 0) break
 
         // Ensure every tool call has an ID
@@ -603,146 +689,77 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     }
   }, [context, messages, completionParams])
 
-  // Simple mode action-based completion
+  // Simple mode: single completion, extract htmlCode for preview
   const handleSimpleModeCompletion = useCallback(async (
     userText: string,
     assistantId: string,
-    projectId: string,
   ) => {
     if (!context) { Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage); return }
     setIsStreaming(true)
     autoExpandedRef.current = false
 
     try {
-      const fileTree = await projectStorage.getProjectFileTree(projectId)
-      const projectMeta = await projectStorage.getProjectMeta(projectId)
-      const systemContent = (appGenConfigRef.current.mode === 'simple'
-        ? getEffectivePrompt(appGenConfigRef.current)
-        : APP_GEN_PROMPT) + `\n\nCurrent project "${projectMeta?.name || 'App'}" files:\n${fileTree}\n\n`
-
-      let allMessages: any[] = [
+      const systemContent = getEffectivePrompt(appGenConfigRef.current)
+      const allMessages = [
         { role: 'system' as const, content: systemContent },
         ...messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
         { role: 'user' as const, content: userText },
       ]
 
       const params = completionParams || {}
-      let loopCount = 0
-      const maxLoops = 20
-
-      while (loopCount < maxLoops) {
-        loopCount++
-        const loopId = loopCount > 1 ? `assistant_${Date.now()}_${loopCount}` : assistantId
-
-        if (loopCount > 1) {
-          const newMsg: ChatMessage = { id: loopId, role: 'assistant', content: '' }
-          setMessages(prev => [...prev, newMsg])
-        }
-
-        const completionResult = await context.completion(
-          { ...params, messages: allMessages, reasoning_format: 'auto' },
-          (_data: any) => {
-            const content = _data.content || ''
-            if (content) {
+      const { promise, stop } = await context.parallel.completion(
+        { ...params, messages: allMessages, reasoning_format: 'auto' },
+        (_reqId: number, data: any) => {
+          const content = data.content || ''
+          if (content) {
+            setMessages(prev => prev.map(msg =>
+              msg.id === assistantId ? { ...msg, content } : msg,
+            ))
+          }
+          if (content && content.includes('```html')) {
+            const sm = content.match(/```html\n([\s\S]*)$/)
+            if (sm) {
+              latestHtmlRef.current = sm[1]
               setMessages(prev => prev.map(msg =>
-                msg.id === loopId ? { ...msg, content } : msg,
+                msg.id === assistantId ? { ...msg, htmlCode: sm[1] } : msg,
               ))
             }
-            if (content && content.includes('```html')) {
-              const sm = content.match(/```html\n([\s\S]*)$/)
-              if (sm) {
-                latestHtmlRef.current = sm[1]
-                setMessages(prev => prev.map(msg =>
-                  msg.id === loopId ? { ...msg, htmlCode: sm[1] } : msg,
-                ))
-              }
-            }
-          },
-        )
-
-        const finalContent = completionResult.interrupted
-          ? completionResult.text
-          : (completionResult.content || completionResult.text || '')
-        const actions = parseActions(finalContent)
-        const displayContent = stripActionTags(finalContent)
-
-        if (displayContent) {
-          setMessages(prev => prev.map(msg =>
-            msg.id === loopId ? { ...msg, content: displayContent } : msg,
-          ))
-        }
-
-        // Extract htmlCode for preview (if present in final content)
-        const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
-        const extractedHtml = htmlMatch?.[1]
-        if (extractedHtml) {
-          latestHtmlRef.current = extractedHtml
-          setMessages(prev => prev.map(msg =>
-            msg.id === loopId ? { ...msg, htmlCode: extractedHtml } : msg,
-          ))
-        }
-
-        if (actions.length === 0 || actions.some(a => a.type === 'done')) break
-
-        // Execute actions
-        let resultLines: string[] = []
-        for (const action of actions) {
-          try {
-            switch (action.type) {
-              case 'read_file':
-                resultLines.push(`[${action.path}]\n${await projectStorage.readFile(projectId, action.path!)}`)
-                break
-              case 'write_file':
-                await projectStorage.writeFile(projectId, action.path!, action.content || '')
-                resultLines.push(`Written: ${action.path}`)
-                break
-              case 'delete_file':
-                await projectStorage.deleteFile(projectId, action.path!)
-                resultLines.push(`Deleted: ${action.path}`)
-                break
-              case 'list_files':
-                resultLines.push((await projectStorage.listProjectFiles(projectId)).join('\n') || '(empty)')
-                break
-              case 'create_directory':
-                await projectStorage.createDirectory(projectId, action.path!)
-                resultLines.push(`Created dir: ${action.path}`)
-                break
-            }
-          } catch (e: any) {
-            resultLines.push(`Error: ${e.message}`)
           }
+        },
+      )
+      stopRef.current = stop
+      const timeoutPromise = new Promise<any>(resolve =>
+        setTimeout(() => resolve({ interrupted: true, content: null, text: '' }), 8000),
+      )
+      const completionResult = await Promise.race([promise, timeoutPromise])
+      stopRef.current = null
+
+      const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text || '')
+      const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
+      const extractedHtml = htmlMatch?.[1]
+      setMessages(prev => prev.map(msg =>
+        msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: extractedHtml || msg.htmlCode } : msg,
+      ))
+
+      // Auto-save to workspace
+      if (extractedHtml) {
+        try {
+          if (projectIdRef.current) {
+            await projectStorage.writeFile(projectIdRef.current, 'index.html', extractedHtml)
+            const files = await projectStorage.listProjectFiles(projectIdRef.current)
+            setAppFileTabs(files.filter(f => f !== '.meta.json'))
+            setWorkspacePreviewHtml(extractedHtml)
+          } else {
+            const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
+            const project = await projectStorage.createProject(nameMatch?.[1] || 'Generated App', 'index.html', { 'index.html': extractedHtml })
+            projectIdRef.current = project.id
+            setWorkspaceName(project.name)
+            setWorkspacePreviewHtml(extractedHtml)
+          }
+        } catch (e) {
+          console.warn('[SIMPLE] save err', e)
         }
-
-        const resultText = resultLines.join('\n')
-
-        // Add system message for feedback
-        const systemId = `system_${Date.now()}`
-        const systemMsg: ChatMessage = { id: systemId, role: 'system', content: `Action results:\n${resultText}` }
-        setMessages(prev => [...prev, systemMsg])
-
-        // Add to allMessages for next loop
-        allMessages = [
-          ...allMessages,
-          { role: 'assistant' as const, content: displayContent || finalContent },
-          { role: 'system' as const, content: resultText },
-        ]
-
-        // Refresh file tabs
-        const updatedFiles = await projectStorage.listProjectFiles(projectId)
-        setAppFileTabs(updatedFiles.filter(f => f !== '.meta.json'))
       }
-
-      // Final: read main file for preview
-      try {
-        const meta = projectMeta || await projectStorage.getProjectMeta(projectId)
-        if (meta) {
-          const mainCode = await projectStorage.readFile(projectId, meta.mainFile)
-          latestHtmlRef.current = mainCode
-          setMessages(prev => prev.map(msg =>
-            msg.id === assistantId ? { ...msg, htmlCode: mainCode } : msg,
-          ))
-        }
-      } catch {}
 
     } catch (error: any) {
       if (error?.message?.toLowerCase().includes('model')) {
@@ -816,12 +833,25 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         const projectMeta = projectId ? await projectStorage.getProjectMeta(projectId) : null
         await startAppModeCompletion(text, userMsg, assistantId, { id: projectId || '', name: projectMeta?.name || appName })
       } else {
-        // Simple mode: get/create workspace and use action-based completion
-        const ws = await projectStorage.getOrCreateWorkspace(route.params?.editProjectId || 'default', appName)
-        projectIdRef.current = ws.id
+        // Simple mode: single completion, extract html for preview
+        const appEditHtml = editAppCodeRef.current || pendingAppCode?.code
+        let userText = text
+        if (appEditHtml) {
+          userText = `\`\`\`html\n${appEditHtml}\n\`\`\`\n\n${text}`
+        } else if (pendingContext) {
+          userText = `${(t as any).appgen?.contextFile || '引用文件'}：${pendingContext.filePath}\n\`\`\`\n${pendingContext.content}\n\`\`\`\n\n${text}`
+        }
+        setPendingAppCode(null)
+        setPendingContext(null)
+        // Save full user text to message for regeneration
+        if (userText !== text) {
+          setMessages(prev => prev.map(m =>
+            m.id === userMsg.id ? { ...m, content: userText } : m,
+          ))
+        }
         setIsStreaming(true)
         try {
-          await handleSimpleModeCompletion(text, assistantId, ws.id)
+          await handleSimpleModeCompletion(userText, assistantId)
         } catch (e: any) {
           Alert.alert(t.common.error, e?.message || '未知错误')
         } finally {
@@ -1466,7 +1496,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                 <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
               )}
               {item.htmlCode ? (
-                <AppPreview html={item.htmlCode} onAIMessage={handleAIMessage} defaultTab="code" onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: item.htmlCode })} />
+                <View style={{ paddingHorizontal: 0, paddingVertical: 0 }}>
+                  {parseContentSegments(item.content).map((seg, i) =>
+                    seg.type === 'code' ? (
+                      <AppPreview key={i} html={seg.content} onAIMessage={handleAIMessage} defaultTab="code" onSave={handleAppSave} onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: seg.content })} />
+                    ) : (
+                      <Text key={i} style={{ padding: 14, color: colors.text, fontSize: 15, lineHeight: 20 }} selectable>{seg.content}</Text>
+                    )
+                  )}
+                </View>
               ) : item.audioData ? (
                 <TouchableOpacity onPress={() => handlePlayAudio(item.id, item.audioData!)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <Text style={{ fontSize: 24 }}>{playingAudioId === item.id ? '🔊' : '🔈'}</Text>
@@ -1594,25 +1632,133 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               </Text>
             </View>
           )}
-          {!isModelReady && !isReadOnly ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 16, textAlign: 'center' }}>{t.chat.noModelSelected}</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t.app.tagline}</Text>
+
+          {/* App 模式头部：工作区 + Tab 按钮（固定高度，无 flex） */}
+          {isAppMode && (
+            <View>
+              <TouchableOpacity
+                style={{ height: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                onPress={() => navigation.getParent()?.navigate('AppGallery', { selectMode: true })}
+              >
+                <Text style={{ fontSize: 16, marginRight: 8 }}>📦</Text>
+                <Text style={{ flex: 1, color: colors.text, fontSize: 14, fontWeight: '500' }} numberOfLines={1}>
+                  {workspaceName || (t as any).appgen?.noWorkspace || '选择应用'}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 14 }}>›</Text>
+              </TouchableOpacity>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ height: 40, borderBottomWidth: 1, borderBottomColor: colors.border }}
+                contentContainerStyle={{ paddingHorizontal: 8, alignItems: 'center' }}
+              >
+                <TouchableOpacity
+                  style={[appTabBtn, activeAppTab === 'dialogue' && { backgroundColor: colors.primary }]}
+                  onPress={() => setActiveAppTab('dialogue')}
+                >
+                  <Text style={[appTabBtnText, { color: activeAppTab === 'dialogue' ? '#FFF' : colors.textSecondary }]}>💬 {(t as any).appgen?.dialogue || '对话'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[appTabBtn, activeAppTab === 'preview' && { backgroundColor: colors.primary }]}
+                  onPress={() => setActiveAppTab('preview')}
+                >
+                  <Text style={[appTabBtnText, { color: activeAppTab === 'preview' ? '#FFF' : colors.textSecondary }]}>👁 {(t as any).appgen?.preview || '预览'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[appTabBtn, activeAppTab === 'filetree' && { backgroundColor: colors.primary }]}
+                  onPress={() => {
+                    setActiveAppTab('filetree')
+                    if (projectIdRef.current) {
+                      projectStorage.listProjectFiles(projectIdRef.current).then(files => {
+                        setAppFileTabs(files.filter(f => f !== '.meta.json'))
+                      }).catch(() => {})
+                    }
+                  }}
+                >
+                  <Text style={[appTabBtnText, { color: activeAppTab === 'filetree' ? '#FFF' : colors.textSecondary }]}>📁 {(t as any).appgen?.files || '文件'}</Text>
+                </TouchableOpacity>
+                {appFileTabs.map(file => (
+                  <TouchableOpacity
+                    key={file}
+                    style={[appTabBtn, activeAppTab === file && { backgroundColor: colors.primary }]}
+                    onPress={() => setActiveAppTab(file)}
+                  >
+                    <Text style={[appTabBtnText, { color: activeAppTab === file ? '#FFF' : colors.textSecondary }]}>📄 {file.split('/').pop()}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
             </View>
-          ) : messages.length === 0 && !isReadOnly ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 16 }}>{t.app.tagline}</Text>
+          )}
+
+          {/* 内容区：非对话 Tab 的内容 或 FlatList（二选一，flex:1） */}
+          {isAppMode && activeAppTab !== 'dialogue' ? (
+            <View style={{ flex: 1 }}>
+              {activeAppTab === 'preview' && (
+                <View style={{ flex: 1, padding: 8 }}>
+                  <AppPreview html={workspacePreviewHtml || ''} fill onSave={handleAppSave} />
+                </View>
+              )}
+              {activeAppTab === 'filetree' && (
+                <View style={{ flex: 1, padding: 8 }}>
+                  {appFileTabs.length === 0 ? (
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, padding: 8 }}>暂无文件</Text>
+                  ) : (
+                    <ScrollView style={{ flex: 1 }}>
+                      {appFileTabs.map(file => (
+                        <TouchableOpacity
+                          key={file}
+                          style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8 }}
+                          onPress={() => setActiveAppTab(file)}
+                        >
+                          <Text style={{ fontSize: 14, marginRight: 6 }}>
+                            {file.includes('/') ? '📁' : '📄'}
+                          </Text>
+                          <Text style={{ color: colors.text, fontSize: 13 }}>{file}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  )}
+                </View>
+              )}
+              {activeAppTab !== 'dialogue' && activeAppTab !== 'preview' && activeAppTab !== 'filetree' && (
+                <View style={{ flex: 1, padding: 8 }}>
+                  <CodePreview code={fileTabContent} language={activeAppTab.endsWith('.css') ? 'css' : activeAppTab.endsWith('.js') ? 'javascript' : 'html'} style={{ flex: 1 }} />
+                </View>
+              )}
+              {appTodos.length > 0 && (
+                <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: 12, paddingVertical: 6 }}>
+                  {appTodos.map(todo => (
+                    <View key={todo.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}>
+                      <Text style={{ fontSize: 12, marginRight: 6 }}>
+                        {todo.status === 'done' ? '✅' : todo.status === 'running' ? '🔄' : todo.status === 'error' ? '❌' : '⏳'}
+                      </Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{todo.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
           ) : (
-            <FlatList
-              ref={flatListRef}
-              data={messages}
-              keyExtractor={item => item.id}
-              renderItem={renderMessage}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingVertical: 16 }}
-              onScrollBeginDrag={() => { if (selectableMsgId) setSelectableMsgId(null) }}
-            />
+            !isModelReady && !isReadOnly ? (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 16, textAlign: 'center' }}>{t.chat.noModelSelected}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t.app.tagline}</Text>
+              </View>
+            ) : messages.length === 0 && !isReadOnly ? (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 16 }}>{t.app.tagline}</Text>
+              </View>
+            ) : (
+              <FlatList
+                ref={flatListRef}
+                data={messages}
+                keyExtractor={item => item.id}
+                renderItem={renderMessage}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingVertical: 16 }}
+                onScrollBeginDrag={() => { if (selectableMsgId) setSelectableMsgId(null) }}
+              />
+            )
           )}
           {/* 输入区域 */}
           <View style={{
@@ -1650,96 +1796,16 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
               </View>
             )}
 
-            {/* App 模式 Tab 栏（仅复杂模式） */}
-            {isAppMode && appGenConfigRef.current.mode === 'complex' && (
-              <View>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}
-                  contentContainerStyle={{ paddingHorizontal: 8, paddingVertical: 6 }}
-                >
-                  <TouchableOpacity
-                    style={[appTabBtn, activeAppTab === 'dialogue' && { backgroundColor: colors.primary }]}
-                    onPress={() => setActiveAppTab('dialogue')}
-                  >
-                    <Text style={[appTabBtnText, { color: activeAppTab === 'dialogue' ? '#FFF' : colors.textSecondary }]}>💬 {(t as any).appgen?.dialogue || '对话'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[appTabBtn, activeAppTab === 'preview' && { backgroundColor: colors.primary }]}
-                    onPress={() => setActiveAppTab('preview')}
-                  >
-                    <Text style={[appTabBtnText, { color: activeAppTab === 'preview' ? '#FFF' : colors.textSecondary }]}>👁 {(t as any).appgen?.preview || '预览'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[appTabBtn, activeAppTab === 'filetree' && { backgroundColor: colors.primary }]}
-                    onPress={() => {
-                      setActiveAppTab('filetree')
-                      if (projectIdRef.current) {
-                        projectStorage.listProjectFiles(projectIdRef.current).then(files => {
-                          setAppFileTabs(files.filter(f => f !== '.meta.json'))
-                        }).catch(() => {})
-                      }
-                    }}
-                  >
-                    <Text style={[appTabBtnText, { color: activeAppTab === 'filetree' ? '#FFF' : colors.textSecondary }]}>📁 {(t as any).appgen?.files || '文件'}</Text>
-                  </TouchableOpacity>
-                  {appFileTabs.map(file => (
-                    <TouchableOpacity
-                      key={file}
-                      style={[appTabBtn, activeAppTab === file && { backgroundColor: colors.primary }]}
-                      onPress={() => setActiveAppTab(file)}
-                    >
-                      <Text style={[appTabBtnText, { color: activeAppTab === file ? '#FFF' : colors.textSecondary }]}>📄 {file.split('/').pop()}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-                {/* Tab 内容区 */}
-                {activeAppTab === 'preview' && (
-                  <View style={{ height: 300, padding: 8 }}>
-                    <AppPreview html={latestHtmlRef.current || ''} />
-                  </View>
-                )}
-                {activeAppTab === 'filetree' && (
-                  <View style={{ maxHeight: 200, padding: 8 }}>
-                    {appFileTabs.length === 0 ? (
-                      <Text style={{ color: colors.textSecondary, fontSize: 13, padding: 8 }}>暂无文件</Text>
-                    ) : (
-                      <ScrollView style={{ maxHeight: 180 }}>
-                        {appFileTabs.map(file => (
-                          <TouchableOpacity
-                            key={file}
-                            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8 }}
-                            onPress={() => setActiveAppTab(file)}
-                          >
-                            <Text style={{ fontSize: 14, marginRight: 6 }}>
-                              {file.includes('/') ? '📁' : '📄'}
-                            </Text>
-                            <Text style={{ color: colors.text, fontSize: 13 }}>{file}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    )}
-                  </View>
-                )}
-                {activeAppTab !== 'dialogue' && activeAppTab !== 'preview' && activeAppTab !== 'filetree' && (
-                  <View style={{ maxHeight: 200, padding: 8 }}>
-                    <CodePreview code={fileTabContent} language={activeAppTab.endsWith('.css') ? 'css' : activeAppTab.endsWith('.js') ? 'javascript' : 'html'} />
-                  </View>
-                )}
-                {/* 待办列表 */}
-                {appTodos.length > 0 && (
-                  <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: 12, paddingVertical: 6 }}>
-                    {appTodos.map(todo => (
-                      <View key={todo.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 3 }}>
-                        <Text style={{ fontSize: 12, marginRight: 6 }}>
-                          {todo.status === 'done' ? '✅' : todo.status === 'running' ? '🔄' : todo.status === 'error' ? '❌' : '⏳'}
-                        </Text>
-                        <Text style={{ color: colors.textSecondary, fontSize: 12, flex: 1 }} numberOfLines={1}>{todo.label}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
+            {/* 待发送文件上下文 */}
+            {pendingContext && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: 4, paddingBottom: 4 }}>
+                <Text style={{ fontSize: 14, marginRight: 6 }}>📄</Text>
+                <Text style={{ flex: 1, color: colors.text, fontSize: 13 }} numberOfLines={1}>
+                  {(t as any).appgen?.contextFile || '引用文件'}：{pendingContext.filePath}
+                </Text>
+                <TouchableOpacity onPress={() => setPendingContext(null)}>
+                  <Text style={{ color: colors.error, fontSize: 16 }}>✕</Text>
+                </TouchableOpacity>
               </View>
             )}
 
