@@ -2135,16 +2135,7 @@ const MemoContent = React.memo(
                 seg.lang === 'html' ? (
                   <AppPreview key={i} html={seg.content} onAIMessage={handleAIMessage} defaultTab="code" onSave={handleAppSave} onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: seg.content })} />
                 ) : (
-                  <View key={i} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, marginVertical: 8, overflow: 'hidden' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.surface }}>
-                      <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>{seg.lang || 'code'}</Text>
-                      <View style={{ flex: 1 }} />
-                      <TouchableOpacity hitSlop={6} onPress={() => { Clipboard.setString(seg.content) }} style={{ padding: 4 }}>
-                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>📋 复制</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <CodePreview code={seg.content} language={seg.lang || 'html'} style={{ width: '100%', minHeight: 80 }} />
-                  </View>
+                  <CodePreview key={i} code={seg.content} language={seg.lang || 'code'} showHeader wrapLines onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { code: seg.content, language: seg.lang || 'code' })} />
                 )
               ) : seg.type === 'math' ? (
                 <View key={i} style={{ paddingHorizontal: 14, paddingVertical: 4, alignItems: seg.lang === 'display' ? 'center' : 'flex-start' }}>
