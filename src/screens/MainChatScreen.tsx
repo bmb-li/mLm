@@ -250,6 +250,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [isRecording, setIsRecording] = useState(false)
   const recordingRef = useRef<{ stop: () => Promise<string> } | null>(null)
   const processingImageRef = useRef(false)
+  const currentConvIdRef = useRef<string | null>(null)
 
   // Load file content when a file tab is selected
   useEffect(() => {
@@ -295,9 +296,18 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const handleNewChat = () => {
     if (messages.length > 0) {
       const title = messages.find(m => m.role === 'user')?.content.slice(0, 50) || 'Chat'
-      const conv: Conversation = { id: Date.now().toString(), title, timestamp: Date.now(), messages }
-      saveConversations([conv, ...conversations])
+      const id = currentConvIdRef.current || Date.now().toString()
+      const conv: Conversation = { id, title, timestamp: Date.now(), messages }
+      const idx = conversations.findIndex(c => c.id === id)
+      if (idx >= 0) {
+        const updated = [...conversations]
+        updated[idx] = conv
+        saveConversations(updated)
+      } else {
+        saveConversations([conv, ...conversations])
+      }
     }
+    currentConvIdRef.current = null
     setMessages([])
     setStreamingText('')
     setStreamingHtmlCode('')
@@ -313,6 +323,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   }, [activeModelName])
 
   const handleLoadConversation = (conv: Conversation) => {
+    currentConvIdRef.current = conv.id
     setMessages(conv.messages)
     setStreamingText('')
     setStreamingHtmlCode('')
