@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react'
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useFocusEffect, useRoute } from '@react-navigation/native'
 import { View, FlatList, TextInput, TouchableOpacity, Text, KeyboardAvoidingView, Platform, Keyboard, Alert, Modal, StyleSheet, Pressable, Dimensions, ActivityIndicator, Image, Linking, ScrollView } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
@@ -27,6 +27,8 @@ import RNBlobUtil from 'react-native-blob-util'
 import Icon from '@react-native-vector-icons/material-design-icons'
 import AppPreview from '../components/AppPreview'
 import CodePreview from '../components/CodePreview'
+import Markdown from '../core/markdown/Markdown'
+import MathView from '../components/MathView'
 import { FILE_TOOLS } from '../services/appgen/tools'
 import { executeToolCalls } from '../services/appgen/toolEngine'
 import * as projectStorage from '../services/appgen/projectStorage'
@@ -72,33 +74,58 @@ function formatTokenCount(value?: number) {
 }
 
 interface ContentSegment {
-  type: 'text' | 'code'
+  type: 'text' | 'code' | 'math'
   content: string
+  lang?: string
 }
 
 function parseContentSegments(fullContent: string): ContentSegment[] {
   const segments: ContentSegment[] = []
-  const re = /```html\n([\s\S]*?)```/g
+  // Pass 1: split by code blocks
+  const codeRe = /```(\w*)\n([\s\S]*?)```/g
   let last = 0
   let m: RegExpExecArray | null
-  while ((m = re.exec(fullContent)) !== null) {
+  while ((m = codeRe.exec(fullContent)) !== null) {
     if (m.index > last) {
       segments.push({ type: 'text', content: fullContent.slice(last, m.index).trim() })
     }
-    segments.push({ type: 'code', content: m[1] })
+    segments.push({ type: 'code', content: m[2], lang: m[1] || undefined })
     last = m.index + m[0].length
   }
   if (last < fullContent.length) {
     const rest = fullContent.slice(last).trim()
     if (rest) segments.push({ type: 'text', content: rest })
   }
-  return segments
+  // Pass 2: split text segments by math delimiters
+  const result: ContentSegment[] = []
+  for (const seg of segments) {
+    if (seg.type !== 'text') {
+      result.push(seg)
+      continue
+    }
+    const parts = seg.content.split(/(\$\$[\s\S]*?\$\$|\$[^$\n]*?\$)/g)
+    for (const part of parts) {
+      if (!part) continue
+      if (part.startsWith('$$') && part.endsWith('$$')) {
+        result.push({ type: 'math', content: part.slice(2, -2).trim(), lang: 'display' })
+      } else if (part.startsWith('$') && part.endsWith('$')) {
+        result.push({ type: 'math', content: part.slice(1, -1).trim() })
+      } else {
+        result.push({ type: 'text', content: part })
+      }
+    }
+  }
+  return result
 }
 
 export default function MainChatScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
   const { t } = useI18n()
   const colors = theme.colors
+  const markdownColors = useMemo(() => ({
+    text: '#FFF', textSecondary: colors.textSecondary, surface: colors.surface,
+    primary: colors.primary, border: colors.border, background: colors.background,
+  }), [colors.textSecondary, colors.surface, colors.primary, colors.border, colors.background])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputText, setInputText] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
@@ -204,6 +231,13 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [pendingMedia, setPendingMedia] = useState<{ type: 'image' | 'audio'; data: string; mimeType: string } | null>(null)
   const [pendingAppCode, setPendingAppCode] = useState<{ code: string; name: string } | null>(null)
   const [pendingContext, setPendingContext] = useState<{ filePath: string; content: string } | null>(null)
+  const streamingHtmlCodeRef = useRef('')
+  const streamingReasoningRef = useRef('')
+  const lastTokenTimeRef = useRef(0)
+  const streamingContentRef = useRef('')
+  const [streamingText, setStreamingText] = useState('')
+  const [streamingHtmlCode, setStreamingHtmlCode] = useState('')
+  const [streamingReasoning, setStreamingReasoning] = useState('')
   const [activeAppTab, setActiveAppTab] = useState<'dialogue' | 'preview' | 'filetree' | string>('dialogue')
   const [appFileTabs, setAppFileTabs] = useState<string[]>([])
   const [fileTabContent, setFileTabContent] = useState('')
@@ -265,6 +299,10 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       saveConversations([conv, ...conversations])
     }
     setMessages([])
+    setStreamingText('')
+    setStreamingHtmlCode('')
+    setStreamingReasoning('')
+    streamingHtmlCodeRef.current = ''
     setIsReadOnly(false)
   }
 
@@ -276,6 +314,10 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
   const handleLoadConversation = (conv: Conversation) => {
     setMessages(conv.messages)
+    setStreamingText('')
+    setStreamingHtmlCode('')
+    setStreamingReasoning('')
+    streamingHtmlCodeRef.current = ''
     setShowHistory(false)
     setIsReadOnly(!activeModelName)
   }
@@ -578,8 +620,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           (_data: any) => {
             const content = _data.content || ''
             const reasoningContent = _data.reasoning_content || ''
-            if (content || reasoningContent) {
-              setMessages(prev => prev.map(msg =>
+          if (content || reasoningContent) {
+            setMessages(prev => prev.map(msg =>
                 msg.id === loopId ? { ...msg, content, reasoningContent } : msg,
               ))
             }
@@ -710,58 +752,76 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       const { promise, stop } = await context.parallel.completion(
         { ...params, messages: allMessages, reasoning_format: 'auto' },
         (_reqId: number, data: any) => {
+          const reasoningContent = data.reasoning_content || ''
           const content = data.content || ''
+          if (reasoningContent || content) {
+            lastTokenTimeRef.current = Date.now()
+          }
+          if (reasoningContent) {
+            streamingReasoningRef.current = reasoningContent
+            setStreamingReasoning(reasoningContent)
+          }
           if (content) {
-            setMessages(prev => prev.map(msg =>
-              msg.id === assistantId ? { ...msg, content } : msg,
-            ))
+            streamingContentRef.current = content
+            setStreamingText(content)
           }
           if (content && content.includes('```html')) {
             const sm = content.match(/```html\n([\s\S]*)$/)
             if (sm) {
               latestHtmlRef.current = sm[1]
-              setMessages(prev => prev.map(msg =>
-                msg.id === assistantId ? { ...msg, htmlCode: sm[1] } : msg,
-              ))
+              streamingHtmlCodeRef.current = sm[1]
+              setStreamingHtmlCode(sm[1])
             }
           }
         },
       )
       stopRef.current = stop
-      const timeoutPromise = new Promise<any>(resolve =>
-        setTimeout(() => resolve({ interrupted: true, content: null, text: '' }), 8000),
-      )
+
+      // Refreshable timeout: polls every 1s, fires if no token for 8s
+      lastTokenTimeRef.current = Date.now()
+      let timedOut = false
+      const timeoutPromise = new Promise<any>((resolve) => {
+        const check = () => {
+          if (timedOut) return
+          const elapsed = Date.now() - lastTokenTimeRef.current
+          if (elapsed >= 8000) {
+            timedOut = true
+            const accumulated = streamingContentRef.current || streamingReasoningRef.current || ''
+            resolve({ interrupted: true, content: null, text: accumulated })
+          } else {
+            setTimeout(check, 1000)
+          }
+        }
+        setTimeout(check, 8000)
+      })
+
       const completionResult = await Promise.race([promise, timeoutPromise])
       stopRef.current = null
+      timedOut = true
 
       const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text || '')
       const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
       const extractedHtml = htmlMatch?.[1]
-      setMessages(prev => prev.map(msg =>
-        msg.id === assistantId ? { ...msg, content: finalContent, htmlCode: extractedHtml || msg.htmlCode } : msg,
-      ))
-
-      // Auto-save to workspace
-      if (extractedHtml) {
-        try {
-          if (projectIdRef.current) {
-            await projectStorage.writeFile(projectIdRef.current, 'index.html', extractedHtml)
-            const files = await projectStorage.listProjectFiles(projectIdRef.current)
-            setAppFileTabs(files.filter(f => f !== '.meta.json'))
-            setWorkspacePreviewHtml(extractedHtml)
-          } else {
-            const nameMatch = extractedHtml.match(/<!--\s*App:\s*(.+?)\s*-->/)
-            const project = await projectStorage.createProject(nameMatch?.[1] || 'Generated App', 'index.html', { 'index.html': extractedHtml })
-            projectIdRef.current = project.id
-            setWorkspaceName(project.name)
-            setWorkspacePreviewHtml(extractedHtml)
-          }
-        } catch (e) {
-          console.warn('[SIMPLE] save err', e)
-        }
+      const htmlCode = extractedHtml || streamingHtmlCodeRef.current || undefined
+      const reasoningContent = streamingReasoningRef.current || completionResult.reasoning_content || undefined
+      setMessages(prev => {
+        const newMsgs = [...prev, { id: assistantId, role: 'assistant' as const, content: finalContent, htmlCode, reasoningContent }]
+        return newMsgs
+      })
+      if (reasoningContent) {
+        setExpandedReasoning(prev => new Set(prev).add(assistantId))
       }
-
+      setStreamingText('')
+      setStreamingHtmlCode('')
+      setStreamingReasoning('')
+      streamingHtmlCodeRef.current = ''
+      streamingReasoningRef.current = ''
     } catch (error: any) {
+      setStreamingText('')
+      setStreamingHtmlCode('')
+      setStreamingReasoning('')
+      streamingHtmlCodeRef.current = ''
+      streamingReasoningRef.current = ''
       if (error?.message?.toLowerCase().includes('model')) {
         Alert.alert(t.chat.noModelTitle, t.chat.noModelMessage)
       } else {
@@ -786,7 +846,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     const assistantId = `assistant_${Date.now()}`
     const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
 
-    setMessages(prev => [...prev, userMsg, assistantMsg])
+    setMessages(prev => [...prev, userMsg])
     setInputText('')
     Keyboard.dismiss()
 
@@ -805,6 +865,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
 
     // 秘塔搜索：弹出 WebView 窗口让用户查看结果
     if (searchEnabled && searchEngine === 'metaso') {
+      setMessages(prev => prev.concat(assistantMsg))
       pendingQueryRef.current = text
       pendingAssistantIdRef.current = assistantId
       setShowMetasoModal(true)
@@ -830,6 +891,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       }
 
       if (cfg.mode === 'complex') {
+        setMessages(prev => prev.concat(assistantMsg))
         const projectMeta = projectId ? await projectStorage.getProjectMeta(projectId) : null
         await startAppModeCompletion(text, userMsg, assistantId, { id: projectId || '', name: projectMeta?.name || appName })
       } else {
@@ -861,6 +923,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       return
     }
 
+    setMessages(prev => prev.concat(assistantMsg))
     setIsStreaming(true)
     autoExpandedRef.current = false
 
@@ -1398,16 +1461,15 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
             <Text style={{ fontSize: 13, color: colors.textSecondary, fontFamily: 'monospace', lineHeight: 18 }} selectable>{item.content}</Text>
           </View>
         </View>
-      ) : (
-      <Pressable
+      ) : (<Pressable
         onLongPress={handleLongPress}
         delayLongPress={500}
         style={({ pressed }) => ({
-          alignSelf: isUser ? 'flex-end' : (item.htmlCode ? 'stretch' : 'flex-start'),
+          alignSelf: isUser ? 'flex-end' : 'stretch',
           maxWidth: '100%',
           minWidth: isUser ? undefined : 180,
           marginVertical: 4,
-          marginHorizontal: item.htmlCode ? 0 : 16,
+          marginHorizontal: isUser ? 16 : 0,
           borderRadius: 16,
           backgroundColor: isUser ? colors.card : '#000000',
           overflow: 'hidden',
@@ -1491,31 +1553,19 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                 ))}
               </View>
             )}
-            <View style={{ paddingHorizontal: item.htmlCode ? 0 : 14, paddingVertical: item.htmlCode ? 0 : 10 }}>
-              {item.imageData && (
-                <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
-              )}
-              {item.htmlCode ? (
-                <View style={{ paddingHorizontal: 0, paddingVertical: 0 }}>
-                  {parseContentSegments(item.content).map((seg, i) =>
-                    seg.type === 'code' ? (
-                      <AppPreview key={i} html={seg.content} onAIMessage={handleAIMessage} defaultTab="code" onSave={handleAppSave} onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: seg.content })} />
-                    ) : (
-                      <Text key={i} style={{ padding: 14, color: colors.text, fontSize: 15, lineHeight: 20 }} selectable>{seg.content}</Text>
-                    )
-                  )}
-                </View>
-              ) : item.audioData ? (
-                <TouchableOpacity onPress={() => handlePlayAudio(item.id, item.audioData!)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Text style={{ fontSize: 24 }}>{playingAudioId === item.id ? '🔊' : '🔈'}</Text>
-                  <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 14 }}>{playingAudioId === item.id ? '播放中...' : '点击播放音频'}</Text>
-                </TouchableOpacity>
-              ) : (
-                <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
-                  {item.content || (isStreaming && !isUser ? (processingImageRef.current ? '⏳ ' + t.chat.processing : '...') : '')}
-              </Text>
-              )}
-            </View>
+            <MemoContent
+              item={item}
+              isUser={isUser}
+              isCurrentlyStreaming={isStreaming && messages.length > 0 && messages[messages.length - 1].id === item.id}
+              colors={colors}
+              markdownColors={markdownColors}
+              playingAudioId={playingAudioId}
+              selectableMsgId={selectableMsgId}
+              handlePlayAudio={handlePlayAudio}
+              handleAIMessage={handleAIMessage}
+              handleAppSave={handleAppSave}
+              navigation={navigation}
+            />
           </>
         )}
         {!isUser && (
@@ -1744,7 +1794,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                 <Text style={{ color: colors.textSecondary, fontSize: 16, textAlign: 'center' }}>{t.chat.noModelSelected}</Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t.app.tagline}</Text>
               </View>
-            ) : messages.length === 0 && !isReadOnly ? (
+            ) : messages.length === 0 && !isReadOnly && !streamingText ? (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 16 }}>{t.app.tagline}</Text>
               </View>
@@ -1757,6 +1807,17 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
                 style={{ flex: 1 }}
                 contentContainerStyle={{ paddingVertical: 16 }}
                 onScrollBeginDrag={() => { if (selectableMsgId) setSelectableMsgId(null) }}
+                onContentSizeChange={() => {
+                  if (streamingText || streamingReasoning) {
+                    flatListRef.current?.scrollToEnd({ animated: false })
+                  }
+                }}
+                ListFooterComponent={() => {
+                  if (streamingText || streamingReasoning) {
+                    return <StreamingBubble text={streamingText} htmlCode={streamingHtmlCode} reasoning={streamingReasoning} colors={colors} navigation={navigation} handleAppSave={handleAppSave} handleAIMessage={handleAIMessage} />
+                  }
+                  return null
+                }}
               />
             )
           )}
@@ -2033,6 +2094,125 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     </SafeAreaView>
   )
 }
+
+const MemoContent = React.memo(
+  ({ item, isUser, isCurrentlyStreaming, colors, markdownColors, playingAudioId, selectableMsgId, handlePlayAudio, handleAIMessage, handleAppSave, navigation }: any) => {
+    const hasCodeBlocks = item.htmlCode || /```html/i.test(item.content || '') || /\$\$/i.test(item.content || '')
+    const segments = parseContentSegments(item.content || '')
+    return (
+      <View style={{ paddingHorizontal: hasCodeBlocks ? 0 : 14, paddingVertical: hasCodeBlocks ? 0 : 10 }}>
+        {item.imageData && (
+          <Image source={{ uri: item.imageData }} style={{ width: 200, height: 200, borderRadius: 8, marginBottom: 6 }} resizeMode="contain" />
+        )}
+        {item.audioData ? (
+          <TouchableOpacity onPress={() => handlePlayAudio(item.id, item.audioData)} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 24 }}>{playingAudioId === item.id ? '🔊' : '🔈'}</Text>
+            <Text style={{ color: isUser ? '#FFF' : colors.text, fontSize: 14 }}>{playingAudioId === item.id ? '播放中...' : '点击播放音频'}</Text>
+          </TouchableOpacity>
+        ) : isUser ? (
+          <Text style={{ color: '#FFF', fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
+            {item.content}
+          </Text>
+        ) : isCurrentlyStreaming ? (
+          <Text style={{ color: colors.text, fontSize: 15, lineHeight: 20 }} selectable={selectableMsgId === item.id}>
+            {item.content || '...'}
+          </Text>
+        ) : (
+          <View style={{ paddingHorizontal: 0, paddingVertical: 0 }}>
+            {segments.map((seg: any, i: number) =>
+              seg.type === 'code' ? (
+                seg.lang === 'html' ? (
+                  <AppPreview key={i} html={seg.content} onAIMessage={handleAIMessage} defaultTab="code" onSave={handleAppSave} onFullscreen={() => navigation.getParent()?.navigate('AppViewer', { htmlCode: seg.content })} />
+                ) : (
+                  <View key={i} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 12, marginVertical: 8, overflow: 'hidden' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.surface }}>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>{seg.lang || 'code'}</Text>
+                      <View style={{ flex: 1 }} />
+                      <TouchableOpacity hitSlop={6} onPress={() => { Clipboard.setString(seg.content) }} style={{ padding: 4 }}>
+                        <Text style={{ fontSize: 12, color: colors.textSecondary }}>📋 复制</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <CodePreview code={seg.content} language={seg.lang || 'html'} style={{ width: '100%', minHeight: 80 }} />
+                  </View>
+                )
+              ) : seg.type === 'math' ? (
+                <View key={i} style={{ paddingHorizontal: 14, paddingVertical: 4, alignItems: seg.lang === 'display' ? 'center' : 'flex-start' }}>
+                  <MathView expression={seg.content} display={seg.lang === 'display'} />
+                </View>
+              ) : (
+                <View key={i} style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
+                  <Markdown value={seg.content} colors={markdownColors} />
+                </View>
+              )
+            )}
+          </View>
+        )}
+      </View>
+    )
+  },
+  (prev: any, next: any) =>
+    prev.item.content === next.item.content &&
+    prev.item.htmlCode === next.item.htmlCode &&
+    prev.item.reasoningContent === next.item.reasoningContent &&
+    prev.item.imageData === next.item.imageData &&
+    prev.item.audioData === next.item.audioData &&
+    prev.isCurrentlyStreaming === next.isCurrentlyStreaming &&
+    prev.colors?.text === next.colors?.text,
+)
+
+const StreamingBubble = React.memo(({ text, htmlCode, reasoning, colors, navigation, handleAppSave, handleAIMessage }: {
+  text: string; htmlCode: string; reasoning: string; colors: any; navigation: any; handleAppSave: any; handleAIMessage: any
+}) => {
+  const hasReasoning = !!reasoning
+  return (
+    <View style={{
+      alignSelf: 'stretch',
+      maxWidth: '100%',
+      marginVertical: 4,
+      marginHorizontal: 0,
+      borderRadius: 16,
+      backgroundColor: '#000000',
+      overflow: 'hidden',
+    }}>
+      {hasReasoning && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 4, backgroundColor: colors.card }}>
+          <Text style={{ fontSize: 12, color: '#DAA520', fontWeight: '600' }}>🧠 思考中...</Text>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity hitSlop={6} onPress={() => { Clipboard.setString(reasoning) }}>
+            <Text style={{ fontSize: 12, color: '#DAA520' }}>📋</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {hasReasoning && (
+        <View style={{
+          paddingHorizontal: 12, paddingVertical: 10,
+          borderLeftWidth: 3,
+          borderLeftColor: '#DAA520',
+        }}>
+          <Text style={{ fontSize: 13, color: '#DAA520', fontFamily: 'monospace', lineHeight: 18, fontStyle: 'italic' }} selectable>
+            {reasoning}
+          </Text>
+        </View>
+      )}
+      {text ? (
+        <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+          <Text style={{ color: colors.text, fontSize: 15, lineHeight: 20 }} selectable>
+            {text}
+          </Text>
+        </View>
+      ) : !hasReasoning ? (
+        <View style={{ paddingHorizontal: 14, paddingVertical: 10 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>思考中...</Text>
+        </View>
+      ) : null}
+    </View>
+  )
+}, (prev, next) =>
+  prev.text === next.text &&
+  prev.htmlCode === next.htmlCode &&
+  prev.reasoning === next.reasoning &&
+  prev.colors?.text === next.colors?.text
+)
 
 function FloatingMenuItem({ icon, label, destructive, onPress }: { icon: string; label: string; destructive?: boolean; onPress: () => void }) {
   const { theme } = useTheme()

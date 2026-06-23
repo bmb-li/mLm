@@ -80,7 +80,6 @@ window.renderCode = function(lines) {
 
   useEffect(() => {
     const lineCount = code.split('\n').length
-    console.warn('[CodePreview] code change', { lineCount, loaded: loadedRef.current, prev: prevLineCountRef.current, codeLen: code.length })
     if (lineCount !== prevLineCountRef.current) {
       prevLineCountRef.current = lineCount
       if (loadedRef.current) {
@@ -93,7 +92,6 @@ window.renderCode = function(lines) {
 
   const onLoad = useCallback(() => {
     loadedRef.current = true
-    console.warn('[CodePreview] onLoad', { lines: codeRef.current.split('\n').length })
     prevLineCountRef.current = codeRef.current.split('\n').length
     webViewRef.current?.injectJavaScript(
       `window.renderCode(${JSON.stringify(codeRef.current.split('\n'))})`,
