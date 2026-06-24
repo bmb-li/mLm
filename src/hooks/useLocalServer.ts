@@ -165,7 +165,7 @@ export function useLocalServer() {
     try {
       const customModels = await loadCustomModels()
       const models = customModels
-        .filter(m => !m.filename?.toLowerCase().includes('mmproj'))
+        .filter(m => m.localPath?.includes('/llm/'))
         .map(m => ({
           id: m.id,
           owned_by: 'local',
