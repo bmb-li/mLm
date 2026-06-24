@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { TCPServer } from '../services/tcp/TCPServer'
 import type { CompletionSettings } from '../services/tcp/settingsBuilder'
 import type { ParsedMessage } from '../services/tcp/messageParser'
-import type { CustomModel } from '../utils/storage'
+import { loadCustomModels, type CustomModel } from '../utils/storage'
 import { useModelContext } from '../contexts/ModelContext'
 
 const TOOL_CALLING_KEY = '@llama_server_tool_calling'
@@ -94,8 +94,7 @@ export function useLocalServer() {
     let ctx = mc.context
 
     if (!ctx && modelId) {
-      const json = await AsyncStorage.getItem('@llama_custom_models')
-      const customModels: CustomModel[] = json ? JSON.parse(json) : []
+      const customModels = await loadCustomModels()
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Auto-loading model: ${modelId}`)
@@ -108,8 +107,7 @@ export function useLocalServer() {
     if (!ctx) throw new Error('No model loaded')
 
     if (modelId && modelId !== mc.activeModelName) {
-      const json = await AsyncStorage.getItem('@llama_custom_models')
-      const customModels: CustomModel[] = json ? JSON.parse(json) : []
+      const customModels = await loadCustomModels()
       const found = customModels.find(m => m.id === modelId || m.filename === modelId)
       if (found?.localPath) {
         serverRef.current?.addLog(`Switching to model: ${modelId}`)
@@ -165,16 +163,15 @@ export function useLocalServer() {
 
   const listModels = useCallback(async () => {
     try {
-      const json = await AsyncStorage.getItem('@llama_custom_models')
-      const customModels: CustomModel[] = json ? JSON.parse(json) : []
+      const customModels = await loadCustomModels()
       const models = customModels
         .filter(m => !m.filename?.toLowerCase().includes('mmproj'))
         .map(m => ({
           id: m.id,
           owned_by: 'local',
           name: m.id,
-          size: 0,
-          modified: new Date(m.addedAt).toISOString(),
+          size: m.addedAt || 0,
+          modified: m.addedAt ? new Date(m.addedAt).toISOString() : new Date().toISOString(),
         }))
       const active = activeModelRef.current
       if (active && !models.find(m => m.id === active.name)) {
