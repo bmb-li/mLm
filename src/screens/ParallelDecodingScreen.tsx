@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import ReactNativeBlobUtil from 'react-native-blob-util'
 import { ExampleModelSetup } from '../components/ExampleModelSetup'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import { createThemedStyles } from '../styles/commonStyles'
 import ContextParamsModal from '../components/ContextParamsModal'
 import CompletionParamsModal from '../components/CompletionParamsModal'
@@ -103,6 +104,7 @@ export default function ParallelDecodingScreen({
   navigation: any
 }) {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
   const insets = useSafeAreaInsets()
@@ -133,6 +135,12 @@ export default function ParallelDecodingScreen({
     useStoredCompletionParams()
   const { value: customModels, reload: reloadCustomModels } =
     useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => {
+      const p = m.localPath || ''
+      return p.includes('/llm/') || p.includes('/mmproj/')
+    }),
+  [customModels])
 
   const handleSaveContextParams = (params: ContextParams) => {
     setContextParams(params)
@@ -165,18 +173,8 @@ export default function ParallelDecodingScreen({
 
   const showParallelInfo = useCallback(() => {
     Alert.alert(
-      'Parallel Decoding',
-      [
-        `This demo showcases parallel request processing using ${parallelSlots} slots.`,
-        '',
-        'Multiple requests are processed concurrently, improving throughput and efficiency.',
-        '',
-        isMultimodalEnabled
-          ? 'Multimodal mode is enabled! Try sending multimodal prompts with images.'
-          : 'Load a multimodal model (SmolVLM, InternVL3, etc.) to enable image understanding.',
-        '',
-        'Try sending multiple prompts and watch them process in parallel!',
-      ].join('\n'),
+      t.examples.parallelDecoding,
+      t.examples.parallelDecodingDesc,
     )
   }, [parallelSlots, isMultimodalEnabled])
 
@@ -294,7 +292,7 @@ export default function ParallelDecodingScreen({
         console.warn('Failed to subscribe to status:', err)
       }
     } catch (error: any) {
-      Alert.alert('Error', `Failed to initialize model: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -352,7 +350,7 @@ export default function ParallelDecodingScreen({
 
   const startConversation = async (prompt: string, images?: string[]) => {
     if (!context || !isParallelMode) {
-      Alert.alert('Error', 'Model not ready or parallel mode not enabled')
+      Alert.alert(t.examples.error, t.examples.noParallelMode)
       return
     }
 
@@ -585,18 +583,18 @@ export default function ParallelDecodingScreen({
       )
 
       if (stateFiles.length === 0) {
-        Alert.alert('Info', 'No state files found')
+        Alert.alert(t.examples.info, t.examples.noStateFiles)
         return
       }
 
       // Confirm before deleting
       Alert.alert(
-        'Clear State Files',
-        `Found ${stateFiles.length} state file(s). Delete all?`,
+        t.examples.clearStateFiles,
+        t.examples.confirmDeleteStateFiles.replace('{n}', String(stateFiles.length)),
         [
-          { text: 'Cancel', style: 'cancel' },
+          { text: t.examples.cancel, style: 'cancel' },
           {
-            text: 'Delete',
+            text: t.examples.delete,
             style: 'destructive',
             onPress: async () => {
               try {
@@ -608,12 +606,12 @@ export default function ParallelDecodingScreen({
                 )
                 console.log(`Deleted ${stateFiles.length} state files`)
                 Alert.alert(
-                  'Success',
-                  `Deleted ${stateFiles.length} state file(s)`,
+                  t.common.success,
+                  t.examples.deletedStateFiles.replace('{n}', String(stateFiles.length)),
                 )
               } catch (error) {
                 console.error('Error deleting state files:', error)
-                Alert.alert('Error', 'Failed to delete some state files')
+                Alert.alert(t.examples.error, t.examples.deleteStateFilesFailed)
               }
             },
           },
@@ -621,19 +619,19 @@ export default function ParallelDecodingScreen({
       )
     } catch (error) {
       console.error('Error listing state files:', error)
-      Alert.alert('Error', 'Failed to list state files')
+      Alert.alert(t.examples.error, t.examples.listStateFilesFailed)
     }
   }
 
   const updateParallelSlots = async (newSlotCount: number) => {
     if (!context || !isParallelMode) {
-      Alert.alert('Error', 'Model not ready or parallel mode not enabled')
+      Alert.alert(t.examples.error, t.examples.noParallelMode)
       return
     }
 
     const currentActiveCount = countActiveSlots(slots)
     if (currentActiveCount > 0) {
-      Alert.alert('Error', 'Cannot change slot count while requests are active')
+      Alert.alert(t.examples.error, t.examples.changeSlotWhileActive)
       return
     }
 
@@ -647,10 +645,10 @@ export default function ParallelDecodingScreen({
         setParallelSlots(newSlotCount)
         console.log(`Parallel slots updated to ${newSlotCount}`)
       } else {
-        Alert.alert('Error', 'Failed to update parallel slot count')
+        Alert.alert(t.examples.error, t.examples.failedUpdateSlotCount)
       }
     } catch (error: any) {
-      Alert.alert('Error', `Failed to update parallel slots: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to update parallel slots: ${error.message}`)
     }
   }
 
@@ -666,9 +664,10 @@ export default function ParallelDecodingScreen({
     return (
       <>
         <ExampleModelSetup
-          description="Download a model to see how llama.rn queues multiple requests, reuses prompt state, and runs them across parallel slots."
+          description={t.examples.parallelDecodingDesc}
           defaultModels={PARALLEL_MODELS}
           customModels={customModels || []}
+          availableModels={availableModels}
           onInitializeCustomModel={(_model, modelPath, mmprojPath) =>
             initializeModel(modelPath, mmprojPath)
           }
@@ -679,10 +678,10 @@ export default function ParallelDecodingScreen({
           showCustomModelModal={showCustomModelModal}
           onOpenCustomModelModal={() => setShowCustomModelModal(true)}
           onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle="Add Custom Parallel Model"
+          customModelModalTitle={t.models.addCustomModel}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         />
 
         <ContextParamsModal
@@ -831,13 +830,13 @@ export default function ParallelDecodingScreen({
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.button} onPress={clearStateFiles}>
-            <Text style={styles.buttonText}>Clear State Files</Text>
+            <Text style={styles.buttonText}>{t.examples.clearStateFiles}</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.inputRow}>
           <TextInput
             style={styles.input}
-            placeholder="Enter custom prompt..."
+            placeholder={t.examples.enterPrompt}
             placeholderTextColor={theme.colors.textSecondary}
             value={customPrompt}
             onChangeText={setCustomPrompt}
@@ -850,7 +849,7 @@ export default function ParallelDecodingScreen({
             onPress={sendCustomPrompt}
             disabled={!customPrompt.trim()}
           >
-            <Text style={styles.buttonText}>Send</Text>
+            <Text style={styles.buttonText}>{t.examples.send}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -860,8 +859,8 @@ export default function ParallelDecodingScreen({
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
               {isMultimodalEnabled
-                ? `No conversations yet.\n\nClick "Send ${MULTIMODAL_EXAMPLE_PROMPTS.length} MM Examples" to see parallel multimodal processing in action,\nor enter a custom prompt below.`
-                : `No conversations yet.\n\nClick "Send ${EXAMPLE_PROMPTS.length} Examples" to see parallel processing in action,\nor enter a custom prompt below.`}
+                ? t.examples.emptyStateMultimodal.replace('{n}', String(MULTIMODAL_EXAMPLE_PROMPTS.length))
+                : t.examples.emptyStateDefault.replace('{n}', String(EXAMPLE_PROMPTS.length))}
             </Text>
           </View>
         ) : (
@@ -904,7 +903,7 @@ export default function ParallelDecodingScreen({
                 <ActivityIndicator color={theme.colors.primary} />
               ) : (
                 <Text style={styles.slotResponse}>
-                  {slot.response || 'Waiting...'}
+                  {slot.response || t.examples.running}
                 </Text>
               )}
               {slot.timings && slot.status === 'completed' && (

@@ -12,6 +12,7 @@ import SettingsScreen from '../screens/SettingsScreen'
 import type { TabParamList } from '../types/navigation'
 
 const AUTO_SERVER_KEY = '@llama_auto_start_server'
+const AUTO_LOAD_KEY = '@llama_auto_load_model'
 const Tab = createBottomTabNavigator<TabParamList>()
 
 function TabIcon({ icon, focused }: { icon: string; focused: boolean }) {
@@ -63,11 +64,16 @@ export default function MainTabNavigator() {
   const { theme } = useTheme()
   const insets = useSafeAreaInsets()
   const [keyboardVisible, setKeyboardVisible] = useState(false)
-  const [initialTab, setInitialTab] = useState<'HomeTab' | 'ServerTab' | null>(null)
+  const [initialTab, setInitialTab] = useState<'HomeTab' | 'ServerTab' | 'ModelTab' | null>(null)
 
   useEffect(() => {
-    AsyncStorage.getItem(AUTO_SERVER_KEY).then(val => {
-      setInitialTab(val === 'true' ? 'ServerTab' : 'HomeTab')
+    Promise.all([
+      AsyncStorage.getItem(AUTO_SERVER_KEY),
+      AsyncStorage.getItem(AUTO_LOAD_KEY),
+    ]).then(([autoServer, autoLoad]) => {
+      if (autoServer === 'true') setInitialTab('ServerTab')
+      else if (autoLoad) setInitialTab('ModelTab')
+      else setInitialTab('HomeTab')
     }).catch(() => setInitialTab('HomeTab'))
   }, [])
 

@@ -100,6 +100,7 @@ export type TranslationStrings = {
     ttsModel: string
     ttsModelDesc: string
     importLocalModel: string
+    autoLoad: string
   }
   tts: {
     title: string
@@ -304,5 +305,194 @@ export type TranslationStrings = {
     benchDesc: string
     stressTest: string
     stressTestDesc: string
+    // Common actions
+    generate: string
+    stopGeneration: string
+    reset: string
+    resetChat: string
+    resetConfirm: string
+    resetTextCompletion: string
+    resetTextConfirm: string
+    done: string
+    edit: string
+    delete: string
+    clear: string
+    clearAll: string
+    allow: string
+    switch: string
+    error: string
+    success: string
+    info: string
+    cancel: string
+    loading: string
+    save: string
+    send: string
+    copy: string
+    remove: string
+    typeMessage: string
+    // Progress
+    initializing: string
+    initializingVocoder: string
+    // Placeholders
+    enterPrompt: string
+    enterMessage: string
+    enterText: string
+    enterQuery: string
+    enterDocument: string
+    enterGrammar: string
+    askTools: string
+    // Labels
+    tools: string
+    messages: string
+    sessions: string
+    logs: string
+    results: string
+    progress: string
+    iterations: string
+    running: string
+    runTests: string
+    logsPlaceholder: string
+    // Embedding
+    addText: string
+    importExamples: string
+    searchEmbeddings: string
+    embeddingsInMemory: string
+    documents: string
+    documentsCount: string
+    rankedResults: string
+    searchResults: string
+    allEmbeddings: string
+    rerankDocuments: string
+    addDocument: string
+    search: string
+    query: string
+    score: string
+    similarity: string
+    // Stress Tests
+    rapidStartStop: string
+    tokenCallbackStress: string
+    sequentialCompletions: string
+    tokenizeDuringCompletion: string
+    rapidContextRelease: string
+    releaseInCallback: string
+    stopBeforeRelease: string
+    // Tool Calls
+    toolExecutionRequest: string
+    toolExecutionDeclined: string
+    toolResult: string
+    mcpToolError: string
+    toolNotFound: string
+    currentWeather: string
+    performMath: string
+    currentTime: string
+    // Device Info
+    deviceInfo: string
+    deviceInfoTitle: string
+    noDeviceInfo: string
+    // Logs
+    runningBenchmark: string
+    startBenchmark: string
+    benchmarkLogs: string
+    benchmarkResults: string
+    benchmarkConfig: string
+    benchmarkCompleted: string
+    modelInitialized: string
+    readyToBench: string
+    runningStressTests: string
+    stressTestsComplete: string
+    stressTestsAborted: string
+    startTests: string
+    // TTS
+    generateSpeech: string
+    generatedAudio: string
+    saveAsWav: string
+    aboutOuteTTS: string
+    speakerConfig: string
+    tipsForResults: string
+    noAudioData: string
+    audioSaved: string
+    speechGenerated: string
+    ttsModelLoaded: string
+    vocoderFailed: string
+    noAudioTokens: string
+    // Text Completion params
+    topK: string
+    topKDesc: string
+    minP: string
+    minPDesc: string
+    typicalP: string
+    typicalPDesc: string
+    repeatPenalty: string
+    repeatPenaltyDesc: string
+    xtcProbability: string
+    xtcProbabilityDesc: string
+    xtcThreshold: string
+    xtcThresholdDesc: string
+    penaltyLastN: string
+    penaltyLastNDesc: string
+    frequencyPenalty: string
+    frequencyPenaltyDesc: string
+    presencePenalty: string
+    presencePenaltyDesc: string
+    mirostatMode: string
+    mirostatModeDesc: string
+    mirostatTau: string
+    mirostatTauDesc: string
+    mirostatEta: string
+    mirostatEtaDesc: string
+    dryMultiplier: string
+    dryMultiplierDesc: string
+    dryBase: string
+    dryBaseDesc: string
+    dryAllowedLength: string
+    dryAllowedLengthDesc: string
+    dryPenaltyLastN: string
+    dryPenaltyLastNDesc: string
+    topNSigma: string
+    topNSigmaDesc: string
+    seed: string
+    seedDesc: string
+    grammar: string
+    extraSamplingParams: string
+    // TTS additional
+    enterTextToSpeak: string
+    ttsAboutDesc: string
+    speakerConfigDesc: string
+    tipsList: string
+    audioReady: string
+    downloadVocoder: string
+    processingComplete: string
+    // Embedding alerts
+    embeddingError: string
+    embeddingSuccess: string
+    embeddingFailed: string
+    searchError: string
+    searchFailed: string
+    importError: string
+    importFailed: string
+    rerankingError: string
+    rerankingFailed: string
+    clearEmbeddingsConfirm: string
+    importedExamples: string
+    importedExamplesRerank: string
+    noMultimodalSupport: string
+    noImageSupport: string
+    noAudioSupport: string
+    maxImageTokensPlaceholder: string
+    noParallelMode: string
+    noStateFiles: string
+    clearStateFiles: string
+    confirmDeleteStateFiles: string
+    deletedStateFiles: string
+    deleteStateFilesFailed: string
+    listStateFilesFailed: string
+    changeSlotWhileActive: string
+    failedUpdateSlotCount: string
+    emptyStateMultimodal: string
+    emptyStateDefault: string
+    typeLabel: string
+    memoryLabel: string
+    metadataLabel: string
+    loadDeviceInfoFailed: string
   }
 }

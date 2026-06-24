@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { ExampleModelSetup } from '../components/ExampleModelSetup'
 import { MaskedProgress } from '../components/MaskedProgress'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import { MODELS } from '../utils/constants'
 import type { ContextParams } from '../utils/storage'
 import { loadContextParams } from '../utils/storage'
@@ -43,6 +44,7 @@ const BENCH_MODELS = createExampleModelDefinitions(
 
 export default function BenchScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
   const [isLoading, setIsLoading] = useState(false)
@@ -67,6 +69,9 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
     useStoredContextParams()
   const { value: customModels, reload: reloadCustomModels } =
     useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => (m.localPath || '').includes('/llm/')),
+  [customModels])
 
   // Sync logs state with ref for better performance
   useEffect(() => {
@@ -165,7 +170,7 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
       addLog('Ready to run benchmarks.')
     } catch (error: any) {
       addLog(`Failed to initialize model: ${error.message}`)
-      Alert.alert('Error', `Failed to initialize model: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -232,7 +237,7 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
       addLog('✅ Benchmark completed successfully!')
     } catch (error: any) {
       addLog(`❌ Benchmark failed: ${error.message}`)
-      Alert.alert('Error', `Benchmark failed: ${error.message}`)
+      Alert.alert(t.examples.error, `Benchmark failed: ${error.message}`)
     } finally {
       setIsBenching(false)
     }
@@ -242,9 +247,10 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
     return (
       <>
         <ExampleModelSetup
-          description="Download a language model to run performance benchmarks. Benchmarks measure prompt processing and text generation speeds."
+          description={t.examples.benchDesc}
           defaultModels={BENCH_MODELS}
           customModels={customModels || []}
+          availableModels={availableModels}
           onInitializeCustomModel={(_model, modelPath) =>
             initializeModel(modelPath)
           }
@@ -255,10 +261,10 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
           showCustomModelModal={showCustomModelModal}
           onOpenCustomModelModal={() => setShowCustomModelModal(true)}
           onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle="Add Custom Benchmark Model"
+          customModelModalTitle={t.models.addCustomModel}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         />
 
         <ContextParamsModal
@@ -290,26 +296,26 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
             disabled={isBenching || isLoading}
           >
             <Text style={styles.benchButtonText}>
-              {isBenching ? 'Running Benchmark...' : 'Start Benchmark'}
+              {isBenching ? t.examples.runningBenchmark : t.examples.startBenchmark}
             </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.logContainer}>
-          <Text style={styles.logTitle}>Benchmark Logs</Text>
+          <Text style={styles.logTitle}>{t.examples.benchmarkLogs}</Text>
           <TextInput
             style={styles.logArea}
             value={logs.join('\n')}
             multiline
             editable={false}
-            placeholder="Benchmark logs will appear here..."
+            placeholder={t.examples.logsPlaceholder}
           />
           <View style={styles.logControlsContainer}>
             <TouchableOpacity style={styles.logButton} onPress={clearLogs}>
-              <Text style={styles.logButtonText}>Clear</Text>
+              <Text style={styles.logButtonText}>{t.examples.clear}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.logButton} onPress={copyLogs}>
-              <Text style={styles.logButtonText}>Copy</Text>
+              <Text style={styles.logButtonText}>{t.examples.copy}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -317,7 +323,7 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
 
       <MaskedProgress
         visible={isBenching}
-        text="Running benchmark..."
+        text={t.examples.runningBenchmark}
         progress={0}
         showProgressBar={false}
       />

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { ParameterTextInput } from '../components/ParameterFormFields'
 import { ExampleModelSetup } from '../components/ExampleModelSetup'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import type { ContextParams, CompletionParams } from '../utils/storage'
 import { initLlama } from '../../modules/llama.rn/src' // import 'llama.rn'
 import {
@@ -85,6 +86,7 @@ export default function TextCompletionScreen({
   navigation: any
 }) {
   const { theme, isDark } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
   const [prompt, setPrompt] = useState('')
@@ -119,18 +121,21 @@ export default function TextCompletionScreen({
     useStoredCompletionParams()
   const { value: customModels, reload: reloadCustomModels } =
     useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => (m.localPath || '').includes('/llm/')),
+  [customModels])
 
   const handleReset = useCallback(() => {
     Alert.alert(
-      'Reset Text Completion',
-      'Are you sure you want to clear all generated text and reset to default prompt? This action cannot be undone.',
+      t.examples.resetTextCompletion,
+      t.examples.resetTextConfirm,
       [
         {
-          text: 'Cancel',
+          text: t.examples.cancel,
           style: 'cancel',
         },
         {
-          text: 'Reset',
+          text: t.examples.reset,
           style: 'destructive',
           onPress: async () => {
             setTokens([])
@@ -226,7 +231,7 @@ export default function TextCompletionScreen({
         setFormattedPrompt(fallbackPrompt)
       }
     } catch (error) {
-      Alert.alert('Error', `Failed to initialize model: ${error}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -246,7 +251,7 @@ export default function TextCompletionScreen({
 
   const handleGenerate = async () => {
     if (!context || !formattedPrompt) {
-      Alert.alert('Error', 'Please enter a prompt')
+      Alert.alert(t.examples.error, t.examples.enterPrompt)
       return
     }
 
@@ -273,7 +278,7 @@ export default function TextCompletionScreen({
       console.log('Completion finished')
     } catch (error) {
       if (error !== 'aborted') {
-        Alert.alert('Error', `Failed to generate: ${error}`)
+        Alert.alert(t.examples.error, `Failed to generate: ${error}`)
       }
     } finally {
       setIsGenerating(false)
@@ -318,9 +323,10 @@ export default function TextCompletionScreen({
     if (!isModelReady) {
       return (
         <ExampleModelSetup
-          description="Select a model to start text completion"
+          description={t.examples.textCompletionDesc}
           defaultModels={TEXT_COMPLETION_MODELS}
           customModels={customModels || []}
+          availableModels={availableModels}
           onInitializeCustomModel={(_model, modelPath) =>
             handleInitModel(modelPath)
           }
@@ -331,7 +337,7 @@ export default function TextCompletionScreen({
           onCloseCustomModelModal={() => setShowCustomModelModal(false)}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         />
       )
     }
@@ -339,7 +345,7 @@ export default function TextCompletionScreen({
     return (
       <ScrollView style={styles.contentContainer}>
         <View style={styles.textAreaContainer}>
-          <Text style={styles.label}>Text Completion</Text>
+          <Text style={styles.label}>{t.examples.textCompletion}</Text>
           {(() => {
             if (isEditingResult) {
               return (
@@ -354,7 +360,7 @@ export default function TextCompletionScreen({
                     scrollEnabled={false}
                     value={editableResult}
                     onChangeText={setEditableResult}
-                    placeholder="Edit complete text (formatted prompt + generated)..."
+                    placeholder={t.examples.enterMessage}
                     autoFocus
                     keyboardType="ascii-capable"
                   />
@@ -396,7 +402,7 @@ export default function TextCompletionScreen({
                         setIsEditingResult(false)
                       }}
                     >
-                      <Text style={styles.editButtonText}>Done</Text>
+                      <Text style={styles.editButtonText}>{t.examples.done}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -455,7 +461,7 @@ export default function TextCompletionScreen({
                       setIsEditingResult(true)
                     }}
                   >
-                    <Text style={styles.editButtonText}>Edit</Text>
+                    <Text style={styles.editButtonText}>{t.examples.edit}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -464,14 +470,14 @@ export default function TextCompletionScreen({
         </View>
 
         <View style={styles.textAreaContainer}>
-          <Text style={styles.label}>Grammar (optional)</Text>
+          <Text style={styles.label}>{t.examples.grammar}</Text>
           <TextInput
             style={styles.textArea}
             multiline
             scrollEnabled={false}
             value={grammar}
             onChangeText={setGrammar}
-            placeholder="Enter grammar rules (GBNF format)..."
+            placeholder={t.examples.enterGrammar}
             editable={!isGenerating}
             autoCorrect={false}
             autoComplete="off"
@@ -485,7 +491,7 @@ export default function TextCompletionScreen({
             style={[styles.actionButton, styles.stopButton]}
             onPress={handleStop}
           >
-            <Text style={styles.actionButtonText}>Stop Generation</Text>
+            <Text style={styles.actionButtonText}>{t.examples.stopGeneration}</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
@@ -493,17 +499,17 @@ export default function TextCompletionScreen({
             onPress={handleGenerate}
             disabled={!prompt}
           >
-            <Text style={styles.actionButtonText}>Generate</Text>
+            <Text style={styles.actionButtonText}>{t.examples.generate}</Text>
           </TouchableOpacity>
         )}
 
         {/* Completion Sampling Parameters */}
         <View style={styles.textAreaContainer}>
-          <Text style={styles.label}>Additional Sampling Parameters</Text>
+          <Text style={styles.label}>{t.examples.extraSamplingParams}</Text>
 
           <ParameterTextInput
-            label="Top K"
-            description="Limits selection to the K most probable tokens. Lower values are more focused."
+            label={t.examples.topK}
+            description={t.examples.topKDesc}
             value={completionParams?.top_k?.toString() || '40'}
             onChangeText={(text) => {
               if (text === '') {
@@ -520,8 +526,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Min P"
-            description="Minimum probability threshold relative to the most likely token. Higher values filter more tokens."
+            label={t.examples.minP}
+            description={t.examples.minPDesc}
             value={completionParams?.min_p?.toString() || '0.05'}
             onChangeText={(text) => {
               if (text === '') {
@@ -538,8 +544,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Typical P"
-            description="Locally typical sampling parameter. 1.0 disables, lower values increase selectivity."
+            label={t.examples.typicalP}
+            description={t.examples.typicalPDesc}
             value={completionParams?.typical_p?.toString() || '1.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -562,8 +568,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Repeat Penalty"
-            description="Controls repetition of token sequences. 1.0 is no penalty, higher values reduce repetition."
+            label={t.examples.repeatPenalty}
+            description={t.examples.repeatPenaltyDesc}
             value={completionParams?.penalty_repeat?.toString() || '1.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -586,8 +592,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="XTC Probability"
-            description="Chance for token removal via XTC sampler. 0.0 disables, higher values increase diversity."
+            label={t.examples.xtcProbability}
+            description={t.examples.xtcProbabilityDesc}
             value={completionParams?.xtc_probability?.toString() || '0.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -610,8 +616,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="XTC Threshold"
-            description="Minimum probability threshold for XTC sampler. Values > 0.5 effectively disable XTC."
+            label={t.examples.xtcThreshold}
+            description={t.examples.xtcThresholdDesc}
             value={completionParams?.xtc_threshold?.toString() || '0.1'}
             onChangeText={(text) => {
               if (text === '') {
@@ -634,8 +640,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Penalty Last N"
-            description="Last N tokens to consider for repetition penalty. 0 disables, -1 uses context size."
+            label={t.examples.penaltyLastN}
+            description={t.examples.penaltyLastNDesc}
             value={completionParams?.penalty_last_n?.toString() || '64'}
             onChangeText={(text) => {
               if (text === '') {
@@ -658,8 +664,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Frequency Penalty"
-            description="Repeat alpha frequency penalty. Higher values reduce repetition of frequent tokens."
+            label={t.examples.frequencyPenalty}
+            description={t.examples.frequencyPenaltyDesc}
             value={completionParams?.penalty_freq?.toString() || '0.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -682,8 +688,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Presence Penalty"
-            description="Repeat alpha presence penalty. Higher values reduce repetition regardless of frequency."
+            label={t.examples.presencePenalty}
+            description={t.examples.presencePenaltyDesc}
             value={completionParams?.penalty_present?.toString() || '0.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -706,8 +712,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Mirostat Mode"
-            description="Mirostat sampling mode. 0=disabled, 1=Mirostat v1, 2=Mirostat v2."
+            label={t.examples.mirostatMode}
+            description={t.examples.mirostatModeDesc}
             value={completionParams?.mirostat?.toString() || '0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -727,8 +733,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Mirostat Tau"
-            description="Mirostat target entropy (tau). Controls perplexity during generation."
+            label={t.examples.mirostatTau}
+            description={t.examples.mirostatTauDesc}
             value={completionParams?.mirostat_tau?.toString() || '5.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -751,8 +757,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Mirostat Eta"
-            description="Mirostat learning rate (eta). Controls how quickly the algorithm adapts."
+            label={t.examples.mirostatEta}
+            description={t.examples.mirostatEtaDesc}
             value={completionParams?.mirostat_eta?.toString() || '0.1'}
             onChangeText={(text) => {
               if (text === '') {
@@ -775,8 +781,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="DRY Multiplier"
-            description="DRY (Don't Repeat Yourself) repetition penalty multiplier. 0.0 disables DRY sampling."
+            label={t.examples.dryMultiplier}
+            description={t.examples.dryMultiplierDesc}
             value={completionParams?.dry_multiplier?.toString() || '0.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -799,8 +805,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="DRY Base"
-            description="DRY repetition penalty base value. Used as exponential base for penalty calculation."
+            label={t.examples.dryBase}
+            description={t.examples.dryBaseDesc}
             value={completionParams?.dry_base?.toString() || '1.75'}
             onChangeText={(text) => {
               if (text === '') {
@@ -820,8 +826,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="DRY Allowed Length"
-            description="Tokens extending repetition beyond this length receive exponentially increasing penalty."
+            label={t.examples.dryAllowedLength}
+            description={t.examples.dryAllowedLengthDesc}
             value={completionParams?.dry_allowed_length?.toString() || '2'}
             onChangeText={(text) => {
               if (text === '') {
@@ -844,8 +850,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="DRY Penalty Last N"
-            description="How many tokens to scan for DRY repetitions. -1 uses context size, 0 disables."
+            label={t.examples.dryPenaltyLastN}
+            description={t.examples.dryPenaltyLastNDesc}
             value={completionParams?.dry_penalty_last_n?.toString() || '-1'}
             onChangeText={(text) => {
               if (text === '') {
@@ -868,8 +874,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Top N Sigma"
-            description="Top-nσ sampling as described in academic paper. -1.0 disables, lower values increase selectivity."
+            label={t.examples.topNSigma}
+            description={t.examples.topNSigmaDesc}
             value={completionParams?.top_n_sigma?.toString() || '-1.0'}
             onChangeText={(text) => {
               if (text === '') {
@@ -892,8 +898,8 @@ export default function TextCompletionScreen({
           />
 
           <ParameterTextInput
-            label="Seed"
-            description="Random number generator seed. -1 for random seed, any other number for reproducible results."
+            label={t.examples.seed}
+            description={t.examples.seedDesc}
             value={completionParams?.seed?.toString() || '-1'}
             onChangeText={(text) => {
               if (text === '') {

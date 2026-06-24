@@ -22,9 +22,7 @@ interface DeviceInfoItem {
 }
 
 const EXAMPLE_SCREENS = [
-  { routeName: 'Multimodal', labelKey: 'multimodal', descKey: 'multimodalDesc' as const },
   { routeName: 'TextCompletion', labelKey: 'textCompletion', descKey: 'textCompletionDesc' as const },
-  { routeName: 'ToolCalling', labelKey: 'toolCalls', descKey: 'toolCallsDesc' as const },
   { routeName: 'ParallelDecoding', labelKey: 'parallelDecoding', descKey: 'parallelDecodingDesc' as const },
   { routeName: 'Embeddings', labelKey: 'embedding', descKey: 'embeddingDesc' as const },
   { routeName: 'TTS', labelKey: 'tts', descKey: 'ttsDesc' as const },
@@ -42,6 +40,7 @@ function formatBytes(bytes: number) {
 
 export default function ExamplesGalleryScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
+  
   const { t } = useI18n()
   const colors = theme.colors
   const [showDeviceInfo, setShowDeviceInfo] = useState(false)
@@ -55,7 +54,7 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
       setDeviceInfo(devices || [])
       setShowDeviceInfo(true)
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to load device info')
+      Alert.alert(t.examples.error, (error.message || t.examples.loadDeviceInfoFailed))
     } finally {
       setLoadingDeviceInfo(false)
     }
@@ -87,7 +86,7 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
             <Text style={{ fontSize: 16 }}>🖥️</Text>
             <Text style={[styles.cardTitle, { color: colors.text, marginLeft: 8, marginBottom: 0 }]}>
-              {loadingDeviceInfo ? 'Loading...' : 'Device Info'}
+              {loadingDeviceInfo ? t.examples.loading : t.examples.deviceInfo}
             </Text>
           </View>
           <Text style={[styles.cardDesc, { color: colors.textSecondary, marginTop: 4 }]}>
@@ -105,7 +104,7 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
         <View style={styles.modalContainer}>
           <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>🖥️ Device Information</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t.examples.deviceInfoTitle}</Text>
               <TouchableOpacity onPress={() => setShowDeviceInfo(false)}>
                 <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '600' }}>✕</Text>
               </TouchableOpacity>
@@ -113,7 +112,7 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
             <ScrollView showsVerticalScrollIndicator>
               {deviceInfo.length === 0 ? (
                 <Text style={{ color: colors.textSecondary, textAlign: 'center', padding: 20 }}>
-                  No device information available
+                  {t.examples.noDeviceInfo}
                 </Text>
               ) : (
                 deviceInfo.map((device, index) => (
@@ -127,14 +126,14 @@ export default function ExamplesGalleryScreen({ navigation }: { navigation: any 
                       </View>
                     </View>
                     <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
-                      Type: {device.type.toUpperCase()}
+                      {t.examples.typeLabel}: {device.type.toUpperCase()}
                     </Text>
                     <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
-                      Memory: {formatBytes(device.maxMemorySize)}
+                      {t.examples.memoryLabel}: {formatBytes(device.maxMemorySize)}
                     </Text>
                     {device.metadata && Object.keys(device.metadata).length > 0 && (
                       <Text style={[styles.deviceDetail, { color: colors.textSecondary }]}>
-                        Metadata: {Object.entries(device.metadata)
+                        {t.examples.metadataLabel}: {Object.entries(device.metadata)
                           .filter(([_, v]) => v === true)
                           .map(([k]) => k)
                           .join(', ')}

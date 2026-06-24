@@ -15,6 +15,7 @@ import ContextParamsModal from '../components/ContextParamsModal'
 import { MaskedProgress } from '../components/MaskedProgress'
 import { createThemedStyles, Spacing, FontSizes } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import { MODELS } from '../utils/constants'
 import { initLlama } from '../../modules/llama.rn/src' // import 'llama.rn'
 import { useStoredContextParams } from '../hooks/useStoredSetting'
@@ -61,6 +62,7 @@ const RERANK_EXAMPLE_DOCUMENTS = [
 
 const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
 
@@ -155,7 +157,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
         console.error('Model initialization error:', error)
         setIsModelReady(false)
         setInitProgress(0)
-        Alert.alert('Error', `Failed to load model: ${error}`)
+        Alert.alert(t.examples.error, `Failed to load model: ${error}`)
       } finally {
         setIsLoading(false)
       }
@@ -228,7 +230,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
               useParallelMode ? 'Single' : 'Parallel'
             } mode? This will reinitialize the model.`,
             [
-              { text: 'Cancel', style: 'cancel' },
+              { text: t.examples.cancel, style: 'cancel' },
               {
                 text: 'Switch',
                 onPress: async () => {
@@ -287,14 +289,14 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
 
       setEmbeddings((prev) => [...prev, newEmbedding])
       setInputText('')
-      Alert.alert('Success', 'Text embedded and added to memory!')
+      Alert.alert(t.common.success, t.examples.embeddingSuccess)
     } catch (error: any) {
       console.error('Embedding error:', error)
       const errorMessage =
         error?.message || error?.toString() || 'Unknown error occurred'
       Alert.alert(
-        'Embedding Error',
-        `Failed to create embedding: ${errorMessage}`,
+        t.examples.embeddingError,
+        t.examples.embeddingFailed + errorMessage,
       )
     } finally {
       setIsEmbedding(false)
@@ -320,17 +322,17 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
       console.error('Search error:', error)
       const errorMessage =
         error?.message || error?.toString() || 'Unknown error occurred'
-      Alert.alert('Search Error', `Search failed: ${errorMessage}`)
+      Alert.alert(t.examples.searchError, t.examples.searchFailed + errorMessage)
     } finally {
       setIsSearching(false)
     }
   }
 
   const clearEmbeddings = () => {
-    Alert.alert('Clear All', 'Are you sure you want to clear all embeddings?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t.examples.clearAll, t.examples.clearEmbeddingsConfirm, [
+      { text: t.examples.cancel, style: 'cancel' },
       {
-        text: 'Clear',
+        text: t.examples.clear,
         style: 'destructive',
         onPress: () => {
           setEmbeddings([])
@@ -385,16 +387,14 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
 
       setEmbeddings((prev) => [...prev, ...newEmbeddings])
       Alert.alert(
-        'Success',
-        `Imported ${EXAMPLE_TEXTS.length} example texts using ${
-          useParallelMode ? 'parallel' : 'single'
-        } mode!`,
+        t.common.success,
+        t.examples.importedExamples.replace('{n}', String(EXAMPLE_TEXTS.length)),
       )
     } catch (error: any) {
       console.error('Import examples error:', error)
       const errorMessage =
         error?.message || error?.toString() || 'Unknown error occurred'
-      Alert.alert('Import Error', `Failed to import examples: ${errorMessage}`)
+      Alert.alert(t.examples.importError, t.examples.importFailed + errorMessage)
     } finally {
       setIsImporting(false)
     }
@@ -414,7 +414,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
   const handleImportRerankExamples = () => {
     setDocuments(RERANK_EXAMPLE_DOCUMENTS)
     setRerankQuery('What is machine learning?')
-    Alert.alert('Success', 'Example documents and query imported!')
+    Alert.alert(t.common.success, t.examples.importedExamplesRerank)
   }
 
   const handleRerank = async () => {
@@ -438,7 +438,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
       console.error('Rerank error:', error)
       const errorMessage =
         error?.message || error?.toString() || 'Unknown error occurred'
-      Alert.alert('Reranking Error', `Reranking failed: ${errorMessage}`)
+      Alert.alert(t.examples.rerankingError, t.examples.rerankingFailed + errorMessage)
     } finally {
       setIsReranking(false)
     }
@@ -626,7 +626,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
               </View>
               <TextInput
                 style={styles.textInput}
-                placeholder="Enter text to embed..."
+                placeholder={t.examples.enterPrompt}
                 placeholderTextColor={theme.colors.textSecondary}
                 value={inputText}
                 onChangeText={setInputText}
@@ -657,7 +657,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
               <Text style={styles.sectionTitle}>Search Embeddings</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="Enter search query..."
+                placeholder={t.examples.enterQuery}
                 placeholderTextColor={theme.colors.textSecondary}
                 value={queryText}
                 onChangeText={setQueryText}
@@ -738,7 +738,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
               </View>
               <TextInput
                 style={styles.textInput}
-                placeholder="Enter your query..."
+                placeholder={t.examples.enterQuery}
                 placeholderTextColor={theme.colors.textSecondary}
                 value={rerankQuery}
                 onChangeText={setRerankQuery}
@@ -752,7 +752,7 @@ const EmbeddingScreen = ({ navigation }: { navigation: any }) => {
               <Text style={styles.sectionTitle}>Documents to Rerank</Text>
               <TextInput
                 style={styles.documentInput}
-                placeholder="Enter a document..."
+                placeholder={t.examples.enterDocument}
                 placeholderTextColor={theme.colors.textSecondary}
                 value={newDocument}
                 onChangeText={setNewDocument}

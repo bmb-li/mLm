@@ -1,5 +1,5 @@
 /* eslint-disable no-plusplus, no-await-in-loop, no-restricted-syntax */
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import ContextParamsModal from '../components/ContextParamsModal'
 import { ExampleModelSetup } from '../components/ExampleModelSetup'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import { MODELS } from '../utils/constants'
 import type { ContextParams } from '../utils/storage'
 import { loadContextParams } from '../utils/storage'
@@ -52,6 +53,7 @@ interface TestResult {
 
 export default function StressTestScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
 
   // Track race conditions caught via global error handler (errors thrown outside Promise chains)
@@ -82,6 +84,9 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
     useStoredContextParams()
   const { value: customModels, reload: reloadCustomModels } =
     useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => (m.localPath || '').includes('/llm/')),
+  [customModels])
 
   useEffect(() => {
     contextRef.current = context
@@ -220,7 +225,7 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
       addLog('Model initialized successfully!')
     } catch (error: any) {
       addLog(`Failed to initialize: ${error.message}`)
-      Alert.alert('Error', `Failed to initialize model: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -975,9 +980,10 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
     return (
       <>
         <ExampleModelSetup
-          description="Load a model to run stress tests. These tests help identify race conditions and crash scenarios in the native code."
+          description={t.examples.stressTestDesc}
           defaultModels={STRESS_TEST_MODELS}
           customModels={customModels || []}
+          availableModels={availableModels}
           onInitializeCustomModel={(_model, modelPath) =>
             initializeModel(modelPath)
           }
@@ -988,10 +994,10 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
           showCustomModelModal={showCustomModelModal}
           onOpenCustomModelModal={() => setShowCustomModelModal(true)}
           onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle="Add Custom Test Model"
+          customModelModalTitle={t.models.addCustomModel}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         />
 
         <ContextParamsModal
@@ -1036,13 +1042,13 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
             disabled={isTesting}
           >
             <Text style={styles.testButtonText}>
-              {isTesting ? 'Running...' : 'Run Tests'}
+              {isTesting ? t.examples.running : t.examples.runTests}
             </Text>
           </TouchableOpacity>
         </View>
         {isTesting && (
           <Text style={styles.testingHint}>
-            Stress tests are running. Watch the live log below.
+            {t.examples.runningStressTests}
           </Text>
         )}
 
@@ -1050,7 +1056,7 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
         {testResults.length > 0 && (
           <View style={styles.summaryContainer}>
             <Text style={styles.summaryText}>
-              {isTesting ? 'Progress:' : 'Results:'}
+              {isTesting ? t.examples.progress : t.examples.results}
             </Text>
             {testResults.map((result) => (
               <View key={result.name} style={styles.resultItem}>
@@ -1065,7 +1071,7 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
 
         {/* Logs with report appended */}
         <View style={styles.logContainer}>
-          <Text style={styles.logTitle}>Logs</Text>
+          <Text style={styles.logTitle}>{t.examples.logs}</Text>
           <TextInput
             ref={logInputRef}
             style={styles.logArea}
@@ -1073,14 +1079,14 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
             multiline
             editable={false}
             scrollEnabled
-            placeholder="Test logs will appear here..."
+            placeholder={t.examples.logsPlaceholder}
           />
           <View style={styles.logControlsContainer}>
             <TouchableOpacity style={styles.logButton} onPress={clearLogs}>
-              <Text style={styles.logButtonText}>Clear</Text>
+              <Text style={styles.logButtonText}>{t.examples.clear}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.logButton} onPress={copyLogs}>
-              <Text style={styles.logButtonText}>Copy</Text>
+              <Text style={styles.logButtonText}>{t.examples.copy}</Text>
             </TouchableOpacity>
           </View>
         </View>

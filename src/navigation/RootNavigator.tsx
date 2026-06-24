@@ -47,7 +47,7 @@ export default function RootNavigator() {
       <Stack.Screen
         name="ExamplesGallery"
         component={ExamplesGalleryScreen}
-        options={{ title: 'Example Demos' }}
+        options={{ title: 'More Tests' }}
       />
       <Stack.Screen
         name="Multimodal"

@@ -20,6 +20,7 @@ import {
   chatLightTheme,
 } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import type {
   ContextParams,
   CompletionParams,
@@ -125,6 +126,7 @@ const AVAILABLE_TOOLS = [
 
 export default function ToolCallsScreen({ navigation }: { navigation: any }) {
   const { isDark, theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
 
@@ -257,15 +259,15 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
 
   const handleReset = useCallback(() => {
     Alert.alert(
-      'Reset Chat',
-      'Are you sure you want to clear all messages? This action cannot be undone.',
+      t.examples.resetChat,
+      t.examples.resetConfirm,
       [
         {
-          text: 'Cancel',
+          text: t.examples.cancel,
           style: 'cancel',
         },
         {
-          text: 'Reset',
+          text: t.examples.reset,
           style: 'destructive',
           onPress: async () => {
             messagesRef.current = []
@@ -309,17 +311,17 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
         actions={[
           {
             id: 'tools',
-            title: 'Tools',
+            title: t.examples.tools,
             onPress: () => setShowToolsModal(true),
           },
           {
             id: 'messages',
-            title: 'Messages',
+            title: t.examples.messages,
             onPress: () => setShowMessagesModal(true),
           },
           {
             id: 'sessions',
-            title: 'Sessions',
+            title: t.examples.sessions,
             onPress: () => setShowSessionModal(true),
           },
         ]}
@@ -406,7 +408,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
         `Hello! I'm a tool-calling AI assistant. You can customize my tools using the tools button in the header. Try asking me something!`,
       )
     } catch (error: any) {
-      Alert.alert('Error', `Failed to initialize model: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -596,16 +598,16 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
           // Ask user for confirmation before executing tools
           const shouldExecute = await new Promise<boolean>((resolve) => {
             Alert.alert(
-              'Tool Execution Request',
+              t.examples.toolExecutionRequest,
               `The AI wants to execute tool:\n\n${toolCall.function.name}(${toolCall.function.arguments})`,
               [
                 {
-                  text: 'Cancel',
+                  text: t.examples.cancel,
                   style: 'cancel',
                   onPress: () => resolve(false),
                 },
                 {
-                  text: 'Allow',
+                  text: t.examples.allow,
                   onPress: () => resolve(true),
                 },
               ],
@@ -616,7 +618,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
             toolMessage = {
               tool_call_id: toolCall.id!,
               role: 'tool',
-              content: 'Error: Tool execution was declined by the user',
+              content: t.examples.toolExecutionDeclined,
             }
           } else {
             const result = await executeTool({
@@ -649,7 +651,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
         }, 1000)
       }
     } catch (error: any) {
-      Alert.alert('Error', `Failed to generate response: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to generate response: ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -671,7 +673,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
     return (
       <>
         <ExampleModelSetup
-          description="Download a compatible model to demonstrate tool calling capabilities. The AI can execute functions like weather queries, calculations, and time lookups."
+          description={t.examples.toolCallsDesc}
           defaultModels={TOOL_CALL_MODELS}
           customModels={(customModels || []).filter(
             (model) => !model.mmprojFilename,
@@ -686,7 +688,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
           onCloseCustomModelModal={() => setShowCustomModelModal(false)}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         />
 
         <ContextParamsModal
@@ -709,7 +711,7 @@ export default function ToolCallsScreen({ navigation }: { navigation: any }) {
         user={CHAT_USER}
         textInputProps={{
           editable: !isLoading,
-          placeholder: isLoading ? 'Responding...' : 'Ask me to use tools...',
+          placeholder: isLoading ? t.examples.running : t.examples.askTools,
           keyboardType: 'ascii-capable',
         }}
       />

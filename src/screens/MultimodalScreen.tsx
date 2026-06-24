@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useMemo } from 'react'
 import {
   View,
   Text,
@@ -29,6 +29,7 @@ import {
   chatLightTheme,
 } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import { MODELS } from '../utils/constants'
 import type { ContextParams, CompletionParams } from '../utils/storage'
 import { loadContextParams, loadCompletionParams } from '../utils/storage'
@@ -65,6 +66,7 @@ const MULTIMODAL_MODELS = createExampleModelDefinitions(
 
 export default function MultimodalScreen({ navigation }: { navigation: any }) {
   const { isDark, theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
 
@@ -104,6 +106,9 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
     useStoredCompletionParams()
   const { value: customModels, reload: reloadCustomModels } =
     useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => m.mmprojFilename),
+  [customModels])
 
   const handleSaveContextParams = (params: ContextParams) => {
     setContextParams(params)
@@ -262,15 +267,15 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
 
   const handleReset = useCallback(() => {
     Alert.alert(
-      'Reset Chat',
-      'Are you sure you want to clear all messages? This action cannot be undone.',
+      t.examples.resetChat,
+      t.examples.resetConfirm,
       [
         {
-          text: 'Cancel',
+          text: t.examples.cancel,
           style: 'cancel',
         },
         {
-          text: 'Reset',
+          text: t.examples.reset,
           style: 'destructive',
           onPress: async () => {
             messagesRef.current = []
@@ -417,7 +422,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
       const welcomeMessage = createMultimodalWelcomeMessage(support)
       addSystemMessage(welcomeMessage)
     } catch (error: any) {
-      Alert.alert('Error', `Failed to initialize model: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize model: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -583,7 +588,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
 
   const handleAttachmentPress = async () => {
     if (!multimodalSupport) {
-      Alert.alert('Error', 'Multimodal capabilities not yet determined')
+      Alert.alert(t.examples.error, 'Multimodal capabilities not yet determined')
       return
     }
 
@@ -607,7 +612,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
       }
 
       if (supportedTypes.length === 0) {
-        Alert.alert('Info', 'This model does not support image or audio input')
+        Alert.alert(t.examples.info, t.examples.noMultimodalSupport)
         return
       }
 
@@ -664,7 +669,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
             // Determine if it's an image or audio file and check if supported
             if (mimeType.startsWith('image/')) {
               if (!multimodalSupport.vision) {
-                Alert.alert('Error', 'This model does not support image input')
+                Alert.alert(t.examples.error, t.examples.noImageSupport)
                 return
               }
               const mediaBase64 = await convertMediaToBase64(
@@ -678,7 +683,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
               })
             } else if (mimeType.startsWith('audio/')) {
               if (!multimodalSupport.audio) {
-                Alert.alert('Error', 'This model does not support audio input')
+                Alert.alert(t.examples.error, t.examples.noAudioSupport)
                 return
               }
               const mediaBase64 = await convertMediaToBase64(
@@ -696,23 +701,23 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
               if (multimodalSupport.audio) supportedFormats.push('audio')
               const formatText = supportedFormats.join(' or ')
               Alert.alert(
-                'Error',
+                t.examples.error,
                 `Unsupported file format. Please select ${formatText} files.`,
               )
             }
           } catch (conversionError: any) {
             Alert.alert(
-              'Error',
+              t.examples.error,
               `Failed to process file: ${conversionError.message}`,
             )
           }
         } else {
-          Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
+          Alert.alert(t.examples.error, `Failed to copy file: ${localCopy.copyError}`)
         }
       }
     } catch (error: any) {
       if (!error.message.includes('user canceled the document picker')) {
-        Alert.alert('Error', `Failed to pick file: ${error.message}`)
+        Alert.alert(t.examples.error, `Failed to pick file: ${error.message}`)
       }
     }
   }
@@ -729,11 +734,12 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
     return (
       <>
         <ExampleModelSetup
-          description="Download a multimodal model to start analyzing images and audio. These models can understand and describe images and audio, answer questions about visual and audio content, and engage in multimodal conversations."
+          description={t.examples.multimodalDesc}
           defaultModels={MULTIMODAL_MODELS}
           customModels={(customModels || []).filter(
             (model) => model.mmprojFilename,
           )}
+          availableModels={availableModels}
           onInitializeCustomModel={(_model, modelPath, mmprojPath) =>
             initializeModel(modelPath, mmprojPath || '')
           }
@@ -747,20 +753,18 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
           requireMMProj
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={`Initializing model... ${initProgress}%`}
+          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
         >
           <View style={styles.settingContainer}>
-            <Text style={styles.settingLabel}>Max Image Tokens (optional)</Text>
+            <Text style={styles.settingLabel}>{t.params.imageMaxTokens}</Text>
             <Text style={styles.settingDescription}>
-              Limit tokens for dynamic resolution models (e.g., Qwen-VL). Lower
-              values (256-512) improve speed, higher values (up to 4096)
-              preserve detail. Leave empty for model default.
+              {t.params.imageMaxTokensDesc}
             </Text>
             <TextInput
               style={styles.settingInput}
               value={imageMaxTokens}
               onChangeText={setImageMaxTokens}
-              placeholder="e.g., 512"
+              placeholder={t.examples.maxImageTokensPlaceholder}
               placeholderTextColor={theme.colors.textSecondary}
               keyboardType="numeric"
             />
@@ -860,7 +864,7 @@ export default function MultimodalScreen({ navigation }: { navigation: any }) {
 
       <MaskedProgress
         visible={isLoading}
-        text="Processing..."
+        text={t.examples.loading}
         progress={0}
         showProgressBar={false}
       />

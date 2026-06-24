@@ -21,6 +21,7 @@ interface ExampleModelSetupProps {
     ...paths: string[]
   ) => void | Promise<void>
   customModels?: CustomModel[]
+  availableModels?: CustomModel[]
   onInitializeCustomModel?: (
     model: CustomModel,
     modelPath: string,
@@ -36,6 +37,7 @@ interface ExampleModelSetupProps {
   defaultModelSectionTitle?: string
   customModelSectionTitle?: string
   addCustomModelLabel?: string
+  availableModelSectionTitle?: string
   isLoading?: boolean
   initProgress?: number
   progressText?: string
@@ -48,6 +50,7 @@ export function ExampleModelSetup({
   defaultModels,
   onInitializeModel,
   customModels = [],
+  availableModels,
   onInitializeCustomModel,
   onReloadCustomModels,
   showCustomModelModal = false,
@@ -59,6 +62,7 @@ export function ExampleModelSetup({
   defaultModelSectionTitle = 'Default Models',
   customModelSectionTitle = 'Custom Models',
   addCustomModelLabel = '+ Add Custom Model',
+  availableModelSectionTitle = '📦 已下载的模型',
   isLoading = false,
   initProgress = 0,
   progressText = '',
@@ -76,26 +80,24 @@ export function ExampleModelSetup({
         <Text style={themedStyles.setupDescription}>{description}</Text>
         {children}
 
-        {customModels.length > 0 && onInitializeCustomModel && (
+        {availableModels && availableModels.length > 0 && (
           <>
             <Text style={themedStyles.modelSectionTitle}>
-              {customModelSectionTitle}
+              {availableModelSectionTitle}
             </Text>
-            {customModels.map((model) => (
+            {availableModels.map((model) => (
               <CustomModelCard
                 key={model.id}
                 model={model}
                 onInitialize={(modelPath, mmprojPath) =>
-                  onInitializeCustomModel(model, modelPath, mmprojPath)
+                  onInitializeCustomModel
+                    ? onInitializeCustomModel(model, modelPath || '', mmprojPath)
+                    : onInitializeModel(defaultModels[0] || {} as any, modelPath || '', mmprojPath)
                 }
                 onModelRemoved={async () => {
-                  if (onReloadCustomModels) {
-                    await onReloadCustomModels()
-                  }
+                  if (onReloadCustomModels) await onReloadCustomModels()
                 }}
-                initializeButtonText={
-                  defaultModels[0]?.initializeButtonText || 'Initialize'
-                }
+                initializeButtonText="使用此模型"
               />
             ))}
           </>

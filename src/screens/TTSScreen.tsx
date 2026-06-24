@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   View,
   Text,
@@ -18,18 +18,24 @@ import { AudioPlayer } from '../components/AudioPlayer'
 import { ExampleModelSetup } from '../components/ExampleModelSetup'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
+import { useI18n } from '../contexts/I18nContext'
 import type {
   ContextParams,
   CompletionParams,
   TTSParams,
 } from '../utils/storage'
-import { loadContextParams, loadCompletionParams } from '../utils/storage'
+import {
+  loadContextParams,
+  loadCompletionParams,
+  type CustomModel,
+} from '../utils/storage'
 import { createWavFile } from '../utils/audioUtils'
 import { initLlama } from '../../modules/llama.rn/src' // import 'llama.rn'
 import {
   useStoredCompletionParams,
   useStoredContextParams,
   useStoredTTSParams,
+  useStoredCustomModels,
 } from '../hooks/useStoredSetting'
 import { useExampleContext } from '../hooks/useExampleContext'
 import { useExampleScreenHeader } from '../hooks/useExampleScreenHeader'
@@ -39,6 +45,7 @@ const TTS_MODELS = createExampleModelDefinitions(['OUTE_TTS_0_3'])
 
 export default function TTSScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
+  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
   const styles = createStyles(theme, themedStyles)
   const [inputText, setInputText] = useState('')
@@ -63,6 +70,14 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   const { value: completionParams, setValue: setCompletionParams } =
     useStoredCompletionParams()
   const { value: ttsParams, setValue: setTtsParams } = useStoredTTSParams()
+  const { value: customModels, reload: reloadCustomModels } =
+    useStoredCustomModels()
+  const availableModels = useMemo(() =>
+    (customModels || []).filter(m => {
+      const p = m.localPath || ''
+      return p.includes('/tts/') || p.includes('/wavtokenizer/')
+    }),
+  [customModels])
 
   // 自动检测本地 TTS 模型并加载
   useEffect(() => {
@@ -93,7 +108,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
 
   const saveAudioAsWav = async () => {
     if (!audioData || audioData.length === 0) {
-      Alert.alert('No Audio', 'No audio data available to save.')
+      Alert.alert(t.examples.error, t.examples.noAudioData)
       return
     }
 
@@ -139,7 +154,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         console.warn('Failed to cleanup temp file:', cleanupError)
       }
 
-      Alert.alert('Success', `Audio saved as ${filename}`)
+      Alert.alert(t.examples.success, `Audio saved as ${filename}`)
     } catch (error: any) {
       console.error('Error saving audio:', error)
 
@@ -150,7 +165,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
       }
 
       Alert.alert(
-        'Error',
+        t.examples.error,
         `Failed to save audio: ${
           error.message || 'Unknown error'
         }\n\nPlease check the console for more details.`,
@@ -209,12 +224,12 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
       } catch (vocoderError) {
         console.log('Vocoder initialization error:', vocoderError)
         Alert.alert(
-          'TTS Model Loaded',
-          'OuteTTS model loaded successfully, but vocoder initialization failed. Audio tokens can be generated but not played.',
+          t.examples.vocoderFailed,
+          t.examples.vocoderFailed,
         )
       }
     } catch (error: any) {
-      Alert.alert('Error', `Failed to initialize models: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to initialize models: ${error.message}`)
     } finally {
       setIsLoading(false)
       setInitProgress(0)
@@ -292,11 +307,11 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         }
 
         Alert.alert(
-          'Speech Generated',
+          t.examples.speechGenerated,
           `Successfully generated ${result.audio_tokens.length} audio tokens! ${
             isVocoderReady
-              ? 'Audio data is ready for playback.'
-              : 'Note: Audio playback requires vocoder setup.'
+              ? t.examples.audioReady
+              : t.examples.downloadVocoder
           }`,
         )
       } else {
@@ -304,12 +319,12 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
           `Text processed: "${inputText.trim()}" (No audio tokens generated)`,
         )
         Alert.alert(
-          'Processing Complete',
-          'Text was processed but no audio tokens were generated. This may require proper OuteTTS model configuration.',
+          t.examples.processingComplete,
+          t.examples.noAudioTokens,
         )
       }
     } catch (error: any) {
-      Alert.alert('Error', `Failed to generate speech: ${error.message}`)
+      Alert.alert(t.examples.error, `Failed to generate speech: ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -319,8 +334,10 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
     return (
       <>
         <ExampleModelSetup
-          description="Download the OuteTTS model to convert text into natural-sounding speech. For full audio generation and playback, you'll also need the WavTokenizer vocoder model."
+          description={t.examples.ttsDesc}
           defaultModels={TTS_MODELS}
+          customModels={customModels || []}
+          availableModels={availableModels}
           onInitializeModel={(_model, ttsPath, vocoderPath) =>
             initializeModels(ttsPath, vocoderPath)
           }
@@ -328,8 +345,8 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
           initProgress={initProgress}
           progressText={
             context
-              ? 'Initializing vocoder...'
-              : `Initializing TTS model... ${initProgress}%`
+              ? t.examples.initializingVocoder
+              : t.examples.initializing.replace('{progress}', String(initProgress))
           }
           showProgressBar={!context && initProgress > 0}
         />
@@ -353,12 +370,12 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
     <View style={styles.container}>
       <ScrollView style={styles.content}>
         <View style={styles.inputSection}>
-          <Text style={styles.sectionTitle}>Enter Text to Speak</Text>
+          <Text style={styles.sectionTitle}>{t.examples.enterTextToSpeak}</Text>
           <TextInput
             style={styles.textInput}
             value={inputText}
             onChangeText={setInputText}
-            placeholder="Type the text you want to convert to speech..."
+            placeholder={t.examples.enterText}
             multiline
             textAlignVertical="top"
             maxLength={500}
@@ -382,14 +399,14 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
             {isLoading ? (
               <ActivityIndicator size="small" color="white" />
             ) : (
-              <Text style={styles.generateButtonText}>Generate Speech</Text>
+              <Text style={styles.generateButtonText}>{t.examples.generateSpeech}</Text>
             )}
           </TouchableOpacity>
         </View>
 
         {generatedAudio && (
           <View style={styles.audioSection}>
-            <Text style={styles.sectionTitle}>Generated Audio</Text>
+            <Text style={styles.sectionTitle}>{t.examples.generatedAudio}</Text>
             <View style={styles.audioCard}>
               <Text style={styles.audioDescription}>{generatedAudio}</Text>
 
@@ -403,14 +420,14 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
                     ]}
                     onPress={saveAudioAsWav}
                   >
-                    <Text style={styles.generateButtonText}>Save as WAV</Text>
+                    <Text style={styles.generateButtonText}>{t.examples.saveAsWav}</Text>
                   </TouchableOpacity>
                 </>
               ) : (
                 <Text style={styles.infoText}>
                   {isVocoderReady
-                    ? 'Audio data will appear here after generation'
-                    : 'Download WavTokenizer for audio playback'}
+                    ? t.examples.audioReady
+                    : t.examples.downloadVocoder}
                 </Text>
               )}
             </View>
@@ -418,27 +435,19 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         )}
 
         <View style={styles.infoSection}>
-          <Text style={styles.infoTitle}>About OuteTTS</Text>
+          <Text style={styles.infoTitle}>{t.examples.aboutOuteTTS}</Text>
           <Text style={styles.infoText}>
-            OuteTTS is a neural text-to-speech model that converts written text
-            into natural-sounding speech. It supports various languages and can
-            generate high-quality audio with proper intonation and
-            pronunciation.
+            {t.examples.ttsAboutDesc}
           </Text>
 
-          <Text style={styles.infoTitle}>Speaker Configuration</Text>
+          <Text style={styles.infoTitle}>{t.examples.speakerConfig}</Text>
           <Text style={styles.infoText}>
-            Tap the &quot;TTS&quot; button in the header to configure a custom
-            speaker voice. You can import speaker configurations from the
-            OuteTTS Speaker Creator or leave it empty to use the default voice.
+            {t.examples.speakerConfigDesc}
           </Text>
 
-          <Text style={styles.infoTitle}>Tips for Better Results</Text>
+          <Text style={styles.infoTitle}>{t.examples.tipsForResults}</Text>
           <Text style={styles.infoText}>
-            {`• Use clear, well-punctuated text
-• Shorter texts often produce better quality
-• Configure custom speaker for different voices
-• Avoid special characters and abbreviations`}
+            {t.examples.tipsList}
           </Text>
         </View>
       </ScrollView>

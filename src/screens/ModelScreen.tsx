@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, Alert, Modal, Clipboard, TextInput, Switch, ActivityIndicator, FlatList, Linking } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useNavigation } from '@react-navigation/native'
+import { useNavigation, useRoute } from '@react-navigation/native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import RNBlobUtil from 'react-native-blob-util'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -16,6 +17,9 @@ import { ModelDownloader } from '../services/ModelDownloader'
 import { getModelDownloadUrl } from '../utils/constants'
 
 const downloader = new ModelDownloader()
+
+const AUTO_SERVER_KEY = '@llama_auto_start_server'
+const AUTO_LOAD_KEY = '@llama_auto_load_model'
 
 function fmt(v: any): string {
   if (v === null || v === undefined) return 'N/A'
@@ -43,12 +47,45 @@ export default function ModelScreen() {
   const [vocoderPickerTarget, setVocoderPickerTarget] = useState<string | null>(null)
   const [importingFor, setImportingFor] = useState<string | null>(null)
 
-  const { isModelReady, isLoading, initProgress, activeModelName, loadModel, unloadModel } = useModelContext()
+  const { isModelReady, isLoading, initProgress, activeModelName, context, loadModel, unloadModel } = useModelContext()
   const { value: customModels, reload: reloadCustomModels } = useStoredCustomModels()
+  const [autoLoadConfig, setAutoLoadConfig] = useState<{id:string;path:string;mmprojPath?:string;vocoderPath?:string} | null>(null)
 
   useEffect(() => {
     loadContextParams().then(setCtxParams).catch(() => {})
   }, [])
+
+  // Read auto-load config on mount
+  useEffect(() => {
+    AsyncStorage.getItem(AUTO_LOAD_KEY).then(val => {
+      if (val) setAutoLoadConfig(JSON.parse(val))
+    }).catch(() => {})
+  }, [])
+
+  // Auto-load model on mount (startup only)
+  useEffect(() => {
+    AsyncStorage.getItem(AUTO_LOAD_KEY).then(val => {
+      if (!val) return
+      AsyncStorage.getItem(AUTO_SERVER_KEY).then(autoServer => {
+        if (autoServer === 'true') return
+        try {
+          const cfg = JSON.parse(val)
+          if (!cfg.path) return
+          if (context && activeModelName === cfg.id) {
+            ;(navigation as any).navigate('HomeTab')
+            return
+          }
+          loadModel(cfg.path, cfg.id, cfg.mmprojPath, cfg.vocoderPath)
+            .then(() => (navigation as any).navigate('HomeTab'))
+            .catch((err: any) => {
+              Alert.alert('自动加载失败', err?.message || String(err))
+              AsyncStorage.removeItem(AUTO_LOAD_KEY).catch(() => {})
+              setAutoLoadConfig(null)
+            })
+        } catch {}
+      }).catch(() => {})
+    }).catch(() => {})
+  }, [context, activeModelName])
 
   const filteredModels = useMemo(() => {
     return (customModels || []).filter(m => {
@@ -394,7 +431,7 @@ export default function ModelScreen() {
             <View key={model.id} style={[s.card, { backgroundColor: c.surface, borderColor: isActive ? c.primary : c.border }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
                 {isActive && <View style={[s.dot, { backgroundColor: '#34A759', marginRight: 6 }]} />}
-                <Text style={[s.name, { color: c.text, flex: 1 }]}>{model.id}</Text>
+                <Text style={[s.name, { color: autoLoadConfig?.id === model.id ? '#4CAF50' : c.text, flex: 1 }]}>{model.id}</Text>
                 {model.visionEnabled && <View style={[s.tag, { backgroundColor: c.primary + '20' }]}><Text style={[s.tagTxt, { color: c.primary }]}>视觉</Text></View>}
                 {model.audioEnabled && <View style={[s.tag, { backgroundColor: c.primary + '20', marginLeft: 4 }]}><Text style={[s.tagTxt, { color: c.primary }]}>音频</Text></View>}
               </View>
@@ -483,6 +520,19 @@ export default function ModelScreen() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                           <Switch value={model.audioEnabled || false} onValueChange={v => handleToggleAudio(model, v)} />
                           <Text style={{ color: c.text, fontSize: 14 }}>{t.models.audio}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Switch value={autoLoadConfig?.id === model.id} onValueChange={v => {
+                            if (v) {
+                              const cfg = { id: model.id, path: model.localPath || '', mmprojPath: model.mmprojLocalPath, vocoderPath: (model as any).vocoderLocalPath }
+                              AsyncStorage.setItem(AUTO_LOAD_KEY, JSON.stringify(cfg)).catch(() => {})
+                              setAutoLoadConfig(cfg)
+                            } else {
+                              AsyncStorage.removeItem(AUTO_LOAD_KEY).catch(() => {})
+                              setAutoLoadConfig(null)
+                            }
+                          }} />
+                          <Text style={{ color: c.text, fontSize: 14 }}>{t.models.autoLoad}</Text>
                         </View>
                       </View>
                     </>
