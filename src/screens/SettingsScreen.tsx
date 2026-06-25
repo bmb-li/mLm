@@ -370,7 +370,7 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
                   {t.settings.version}
                 </Text>
                 <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
-                  mLm 0.5.1 (llama.rn b{BuildInfo.number})
+                  mLm 0.5.2 (llama.rn v0.12.5 b9769)
                 </Text>
               </View>
             </View>
