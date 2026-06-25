@@ -233,7 +233,6 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const [pendingContext, setPendingContext] = useState<{ filePath: string; content: string } | null>(null)
   const streamingHtmlCodeRef = useRef('')
   const streamingReasoningRef = useRef('')
-  const lastTokenTimeRef = useRef(0)
   const streamingContentRef = useRef('')
   const [streamingText, setStreamingText] = useState('')
   const [streamingHtmlCode, setStreamingHtmlCode] = useState('')
@@ -765,9 +764,6 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         (_reqId: number, data: any) => {
           const reasoningContent = data.reasoning_content || ''
           const content = data.content || ''
-          if (reasoningContent || content) {
-            lastTokenTimeRef.current = Date.now()
-          }
           if (reasoningContent) {
             streamingReasoningRef.current = reasoningContent
             setStreamingReasoning(reasoningContent)
@@ -787,30 +783,10 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         },
       )
       stopRef.current = stop
-
-      // Refreshable timeout: polls every 1s, fires if no token for 8s
-      lastTokenTimeRef.current = Date.now()
-      let timedOut = false
-      const timeoutPromise = new Promise<any>((resolve) => {
-        const check = () => {
-          if (timedOut) return
-          const elapsed = Date.now() - lastTokenTimeRef.current
-          if (elapsed >= 8000) {
-            timedOut = true
-            const accumulated = streamingContentRef.current || streamingReasoningRef.current || ''
-            resolve({ interrupted: true, content: null, text: accumulated })
-          } else {
-            setTimeout(check, 1000)
-          }
-        }
-        setTimeout(check, 8000)
-      })
-
-      const completionResult = await Promise.race([promise, timeoutPromise])
+      const completionResult = await promise
       stopRef.current = null
-      timedOut = true
 
-      const finalContent = completionResult.interrupted ? completionResult.text : (completionResult.content || completionResult.text || '')
+      const finalContent = completionResult.content || completionResult.text || ''
       const htmlMatch = finalContent.match(/```html\n([\s\S]*?)\n```/)
       const extractedHtml = htmlMatch?.[1]
       const htmlCode = extractedHtml || streamingHtmlCodeRef.current || undefined
