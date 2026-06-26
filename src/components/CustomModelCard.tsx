@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react'
 import { View, TouchableOpacity, StyleSheet, Alert } from 'react-native'
 import Icon from '@react-native-vector-icons/material-design-icons'
 import ReactNativeBlobUtil from 'react-native-blob-util'
-import ModelDownloadCard, { MtmdModelDownloadCard } from './ModelDownloadCard'
+import ModelDownloadCard, {
+  MtmdModelDownloadCard,
+  MTPModelDownloadCard,
+} from './ModelDownloadCard'
 import { deleteCustomModel, type CustomModel } from '../utils/storage'
 import { ModelDownloader } from '../services/ModelDownloader'
 
@@ -218,16 +221,31 @@ export default function CustomModelCard({
     setRefreshTrigger((prev) => prev + 1)
   }
 
-  const handleInitialize = (modelPath: string, mmprojPath?: string) => {
-    // For local files, use the local path directly
+  const handleInitialize = (modelPath: string, secondPath?: string) => {
     if (model.localPath) {
-      onInitialize(model.localPath, model.mmprojLocalPath)
+      if (model.mtpAssistantLocalPath) {
+        onInitialize(model.localPath, model.mtpAssistantLocalPath)
+      } else {
+        onInitialize(model.localPath, model.mmprojLocalPath)
+      }
     } else {
-      onInitialize(modelPath, mmprojPath)
+      onInitialize(modelPath, secondPath)
     }
   }
 
   const renderLocalFileCard = () => {
+    if (model.mtpAssistantLocalPath) {
+      return (
+        <MTPModelDownloadCard
+          title={`${model.id} (Local File)`}
+          size="Local files ready"
+          initializeButtonText={initializeButtonText}
+          isLocalFile
+          onInitialize={() => handleInitialize('', '')}
+          onDownloaded={() => {}}
+        />
+      )
+    }
     if (model.mmprojLocalPath) {
       return (
         <MtmdModelDownloadCard
@@ -241,9 +259,7 @@ export default function CustomModelCard({
           onInitialize={() => {
             handleInitialize('', '')
           }}
-          onDownloaded={() => {
-            // No-op for local files
-          }}
+          onDownloaded={() => {}}
         />
       )
     }
@@ -258,14 +274,27 @@ export default function CustomModelCard({
         onInitialize={() => {
           handleInitialize('')
         }}
-        onDownloaded={() => {
-          // No-op for local files
-        }}
+        onDownloaded={() => {}}
       />
     )
   }
 
   const renderHuggingFaceCard = () => {
+    if (model.mtpAssistantFilename) {
+      return (
+        <MTPModelDownloadCard
+          title={`${model.id} (${model.quantization})`}
+          size={`Model: ${modelSize} + Draft: ${mmprojSize}`}
+          initializeButtonText={initializeButtonText}
+          onInitialize={(modelPath: string, draftPath: string) => {
+            handleInitialize(modelPath, draftPath)
+          }}
+          onDownloaded={() => {
+            refreshSizes()
+          }}
+        />
+      )
+    }
     if (model.mmprojFilename) {
       return (
         <MtmdModelDownloadCard

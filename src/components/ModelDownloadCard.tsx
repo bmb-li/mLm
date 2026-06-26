@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Linking,
 } from 'react-native'
 import { ModelDownloader } from '../services/ModelDownloader'
 import type { DownloadProgress } from '../services/ModelDownloader'
@@ -29,6 +30,7 @@ interface BaseModelDownloadCardProps {
   downloadButtonText?: string
   initializeButtonText?: string
   isLocalFile?: boolean
+  renderBrowserButtons?: () => React.ReactNode
 }
 
 interface ModelDownloadCardProps {
@@ -67,6 +69,22 @@ interface MtmdModelDownloadCardProps {
   onDownloaded?: (modelPath: string, mmprojPath: string) => void
   initializeButtonText?: string
   isLocalFile?: boolean
+}
+
+interface DraftModelDownloadCardProps {
+  title: string
+  size: string
+  target: {
+    repo: string
+    filename: string
+  }
+  draft: {
+    repo: string
+    filename: string
+  }
+  onInitialize: (modelPath: string, draftModelPath: string) => void
+  onDownloaded?: (modelPath: string, draftModelPath: string) => void
+  initializeButtonText?: string
 }
 
 // Create themed styles function
@@ -214,6 +232,15 @@ const createStyles = (theme: any) =>
       flexDirection: 'row',
       alignItems: 'center',
     },
+    browserButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 6,
+      marginLeft: 8,
+    },
+    browserButtonText: {
+      fontSize: 18,
+    },
   })
 
 // Common utility functions
@@ -235,6 +262,7 @@ function BaseModelDownloadCard({
   downloadButtonText = 'Download',
   initializeButtonText = 'Initialize',
   isLocalFile = false,
+  renderBrowserButtons,
 }: BaseModelDownloadCardProps) {
   const { theme } = useTheme()
   const styles = createStyles(theme)
@@ -446,12 +474,15 @@ function BaseModelDownloadCard({
 
       <View style={styles.buttonContainer}>
         {!isDownloaded && !isDownloading && (
-          <TouchableOpacity
-            style={styles.downloadButton}
-            onPress={handleDownload}
-          >
-            <Text style={styles.downloadButtonText}>{downloadButtonText}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 8 }}>
+            <TouchableOpacity
+              style={styles.downloadButton}
+              onPress={handleDownload}
+            >
+              <Text style={styles.downloadButtonText}>{downloadButtonText}</Text>
+            </TouchableOpacity>
+            {renderBrowserButtons?.()}
+          </View>
         )}
 
         {isDownloading && (
@@ -468,6 +499,7 @@ function BaseModelDownloadCard({
               <Text style={styles.downloadedText}>Downloaded</Text>
             </View>
             <View style={styles.actionButtonsContainer}>
+              {renderBrowserButtons?.()}
               <TouchableOpacity
                 style={styles.deleteButton}
                 onPress={handleDelete}
@@ -572,6 +604,92 @@ export function MtmdModelDownloadCard({
       downloadButtonText="Download Model & MMProj"
       initializeButtonText={initializeButtonText}
       isLocalFile={isLocalFile}
+    />
+  )
+}
+
+export function MTPModelDownloadCard({
+  title,
+  size,
+  onInitialize,
+  onDownloaded,
+  initializeButtonText,
+  isLocalFile = false,
+}: {
+  title: string
+  size: string
+  onInitialize: (...paths: string[]) => void
+  onDownloaded?: (...paths: string[]) => void
+  initializeButtonText?: string
+  isLocalFile?: boolean
+}) {
+  const files: ModelFile[] = [
+    { repo: 'Local', filename: 'target', label: 'Target model' },
+    { repo: 'Local', filename: 'draft', label: 'Draft model' },
+  ]
+
+  return (
+    <BaseModelDownloadCard
+      title={title}
+      size={size}
+      files={files}
+      onInitialize={onInitialize}
+      onDownloaded={onDownloaded}
+      downloadButtonText="Download Target & Draft"
+      initializeButtonText={initializeButtonText}
+      isLocalFile={isLocalFile}
+    />
+  )
+}
+
+export function DraftModelDownloadCard({
+  title,
+  size,
+  target,
+  draft,
+  onInitialize,
+  onDownloaded,
+  initializeButtonText,
+}: DraftModelDownloadCardProps) {
+  const { theme } = useTheme()
+  const styles = createStyles(theme)
+  const files: ModelFile[] = [
+    { repo: target.repo, filename: target.filename, label: 'target model' },
+    { repo: draft.repo, filename: draft.filename, label: 'draft model' },
+  ]
+
+  const openInBrowser = (repo: string, filename: string) => {
+    const url = `https://huggingface.co/${repo}/blob/main/${filename}`
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Error', `Failed to open URL: ${url}`)
+    })
+  }
+
+  return (
+    <BaseModelDownloadCard
+      title={title}
+      size={size}
+      files={files}
+      onInitialize={onInitialize}
+      onDownloaded={onDownloaded}
+      downloadButtonText="Download Target & Draft"
+      initializeButtonText={initializeButtonText}
+      renderBrowserButtons={() => (
+        <View style={{ flexDirection: 'row', gap: 4 }}>
+          <TouchableOpacity
+            style={styles.browserButton}
+            onPress={() => openInBrowser(target.repo, target.filename)}
+          >
+            <Text style={styles.browserButtonText}>🌐</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.browserButton}
+            onPress={() => openInBrowser(draft.repo, draft.filename)}
+          >
+            <Text style={styles.browserButtonText}>🌐</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     />
   )
 }

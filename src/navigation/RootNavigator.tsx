@@ -15,6 +15,7 @@ import AppViewerScreen from '../screens/AppViewerScreen'
 import AppGenSettingsScreen from '../screens/AppGenSettingsScreen'
 import BenchScreen from '../screens/BenchScreen'
 import StressTestScreen from '../screens/StressTestScreen'
+import MTPSpeculativeScreen from '../screens/MTPSpeculativeScreen'
 import type { RootStackParamList } from '../types/navigation'
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
@@ -88,6 +89,11 @@ export default function RootNavigator() {
         name="StressTest"
         component={StressTestScreen}
         options={{ title: 'Stress Test' }}
+      />
+      <Stack.Screen
+        name="MTPSpeculative"
+        component={MTPSpeculativeScreen}
+        options={{ title: 'MTP Speculative' }}
       />
       <Stack.Screen
         name="ServerLogs"

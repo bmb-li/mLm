@@ -41,10 +41,11 @@ export default function ModelScreen() {
   const [renameVis, setRenameVis] = useState(false)
   const [renameModel, setRenameModel] = useState<CustomModel | null>(null)
   const [renameText, setRenameText] = useState('')
-  const [activeTab, setActiveTab] = useState<'available' | 'mmproj' | 'tts' | 'wavtokenizer'>('available')
+  const [activeTab, setActiveTab] = useState<'available' | 'mmproj' | 'tts' | 'wavtokenizer' | 'mtp' | 'mtp-assistant'>('available')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [mmprojPickerTarget, setMmprojPickerTarget] = useState<string | null>(null)
   const [vocoderPickerTarget, setVocoderPickerTarget] = useState<string | null>(null)
+  const [mtpAssistantPickerTarget, setMtpAssistantPickerTarget] = useState<string | null>(null)
   const [importingFor, setImportingFor] = useState<string | null>(null)
 
   const { isModelReady, isLoading, initProgress, activeModelName, context, loadModel, unloadModel } = useModelContext()
@@ -94,6 +95,8 @@ export default function ModelScreen() {
       if (activeTab === 'mmproj') return p.includes('/mmproj/')
       if (activeTab === 'tts') return p.includes('/tts/')
       if (activeTab === 'wavtokenizer') return p.includes('/wavtokenizer/')
+      if (activeTab === 'mtp') return p.includes('/mtp/')
+      if (activeTab === 'mtp-assistant') return p.includes('/mtp-assistant/')
       return false
     })
   }, [customModels, activeTab])
@@ -124,6 +127,18 @@ export default function ModelScreen() {
       }
     }
     return files
+  }, [customModels])
+
+  const availableMtpAssistantFiles = useMemo(() => {
+    const seen = new Set<string>()
+    return (customModels || []).reduce<{ label: string; path: string }[]>((acc, m) => {
+      const p = m.localPath || ''
+      if (p.includes('/mtp-assistant/') && !seen.has(p)) {
+        seen.add(p)
+        acc.push({ label: m.id, path: p })
+      }
+      return acc
+    }, [])
   }, [customModels])
 
   const updateModel = useCallback(async (model: CustomModel, changes: Partial<CustomModel>) => {
@@ -222,6 +237,48 @@ export default function ModelScreen() {
     }
     setMmprojPickerTarget(null)
   }, [customModels, updateModel])
+
+  const handleMtpAssistantSelect = useCallback(async (targetId: string, path: string, label: string) => {
+    const model = (customModels || []).find(m => m.id === targetId)
+    if (model) {
+      await updateModel(model, { mtpAssistantFilename: label, mtpAssistantLocalPath: path })
+    }
+    setMtpAssistantPickerTarget(null)
+  }, [customModels, updateModel])
+
+  const handleImportMtpAssistant = useCallback(async (model: CustomModel) => {
+    try {
+      setImportingFor(model.id)
+      const { pick, keepLocalCopy } = require('@react-native-documents/picker')
+      const [file] = await pick({ type: ['*/*'] })
+      if (!file?.uri || !file?.name) return
+      if (!file.name.toLowerCase().endsWith('.gguf')) {
+        Alert.alert('Invalid File', 'Please select a GGUF file')
+        return
+      }
+      const [localCopy] = await keepLocalCopy({
+        files: [{ uri: file.uri, fileName: file.name }],
+        destination: 'documentDirectory',
+      })
+      if (localCopy.status !== 'success') {
+        Alert.alert('Error', `Failed to copy file: ${localCopy.copyError}`)
+        return
+      }
+      const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/mtp-assistant`
+      if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
+      await RNBlobUtil.fs.mv(localCopy.localUri.replace(/^file:\/\//, ''), `${destDir}/${file.name}`)
+      await updateModel(model, { mtpAssistantFilename: file.name, mtpAssistantLocalPath: `file://${destDir}/${file.name}` })
+      await reloadCustomModels()
+    } catch (e: any) {
+      if (e?.code !== 'DOCUMENT_PICKER_CANCELED') Alert.alert(t.common.error, e.message)
+    } finally {
+      setImportingFor(null)
+    }
+  }, [updateModel, t, reloadCustomModels])
+
+  const handleRemoveMtpAssistant = useCallback(async (model: CustomModel) => {
+    await updateModel(model, { mtpAssistantFilename: undefined, mtpAssistantLocalPath: undefined })
+  }, [updateModel])
 
   const handleLoadModel = async (path: string, name: string, mmprojPath?: string, vocoderPath?: string) => {
     try {
@@ -348,6 +405,80 @@ export default function ModelScreen() {
     setTimeout(() => Linking.openURL(getModelDownloadUrl(ttsVocoderRepo, ttsVocoderFile)), 800)
   }, [])
 
+  // MTP download states
+  const [mtpDownloading, setMtpDownloading] = useState(false)
+  const [mtpDownloadProgress, setMtpDownloadProgress] = useState(0)
+  const [mtpDownloadStatus, setMtpDownloadStatus] = useState('')
+  const [mtpAssistantDownloading, setMtpAssistantDownloading] = useState(false)
+  const [mtpAssistantDownloadProgress, setMtpAssistantDownloadProgress] = useState(0)
+  const [mtpAssistantDownloadStatus, setMtpAssistantDownloadStatus] = useState('')
+
+  const handleMtpDownloadLocal = useCallback(async (modelDef: { repo: string; filename: string; id: string; name: string }) => {
+    try {
+      setMtpDownloading(true)
+      setMtpDownloadProgress(0)
+      setMtpDownloadStatus(modelDef.name + '...')
+      const path = await downloader.downloadModel(modelDef.repo, modelDef.filename, (p) => {
+        setMtpDownloadProgress(Math.round(p.percentage))
+        setMtpDownloadStatus(`${p.percentage}%`)
+      })
+      setMtpDownloadProgress(100)
+      setMtpDownloadStatus(t.common.success)
+      const newModel: CustomModel = {
+        id: modelDef.id,
+        repo: modelDef.repo,
+        filename: modelDef.filename,
+        quantization: 'Unknown',
+        addedAt: Date.now(),
+        localPath: path,
+      }
+      await saveCustomModel(newModel)
+      await reloadCustomModels()
+      Alert.alert(t.common.success, `${modelDef.name} downloaded!`)
+    } catch (e: any) {
+      Alert.alert(t.common.error, e.message)
+    } finally {
+      setMtpDownloading(false)
+      setMtpDownloadProgress(0)
+      setMtpDownloadStatus('')
+    }
+  }, [t, reloadCustomModels])
+
+  const handleMtpDraftDownloadLocal = useCallback(async () => {
+    if (mtpAssistantDownloading) return
+    const repo = 'lym00/gemma-4-E2B-it-qat-q4_0-unquantized-assistant-gguf-test'
+    const filename = 'gemma-4-E2B-it-qat-assistant-q4_0.gguf'
+    const name = 'Gemma 4 E2B MTP Assistant'
+    try {
+      setMtpAssistantDownloading(true)
+      setMtpAssistantDownloadProgress(0)
+      setMtpAssistantDownloadStatus(name + '...')
+      const path = await downloader.downloadModel(repo, filename, (p) => {
+        setMtpAssistantDownloadProgress(Math.round(p.percentage))
+        setMtpAssistantDownloadStatus(`${p.percentage}%`)
+      })
+      setMtpAssistantDownloadProgress(100)
+      setMtpAssistantDownloadStatus(t.common.success)
+      const newModel: CustomModel = {
+        id: 'gemma-4-e2b-mtp-assistant',
+        repo,
+        filename,
+        quantization: 'Unknown',
+        addedAt: Date.now(),
+        localPath: path,
+      }
+      await saveCustomModel(newModel)
+      await reloadCustomModels()
+      Alert.alert(t.common.success, `${name} downloaded!`)
+    } catch (e: any) {
+      Alert.alert(t.common.error, e.message)
+    } finally {
+      setMtpAssistantDownloading(false)
+      setMtpAssistantDownloadProgress(0)
+      setMtpAssistantDownloadStatus('')
+    }
+  }, [t, reloadCustomModels, mtpAssistantDownloading])
+
   const handleImportModel = useCallback(async () => {
     try {
       const { pick, keepLocalCopy } = require('@react-native-documents/picker')
@@ -362,7 +493,7 @@ export default function ModelScreen() {
         destination: 'documentDirectory',
       })
       if (local.status !== 'success') throw new Error(local.copyError)
-      const dirMap: Record<string, string> = { available: 'llm', mmproj: 'mmproj', tts: 'tts', wavtokenizer: 'wavtokenizer' }
+      const dirMap: Record<string, string> = { available: 'llm', mmproj: 'mmproj', tts: 'tts', wavtokenizer: 'wavtokenizer', mtp: 'mtp', 'mtp-assistant': 'mtp-assistant' }
       const subDir = dirMap[activeTab] || 'llm'
       const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/${subDir}`
       if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
@@ -403,12 +534,14 @@ export default function ModelScreen() {
           </>
         )}
 
-        <View style={s.tabRow}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.tabRow} contentContainerStyle={{ paddingRight: 16 }}>
           {[
             { key: 'available' as const, label: t.models.tabText },
             { key: 'mmproj' as const, label: t.models.tabMmproj },
             { key: 'tts' as const, label: t.models.tabTts },
             { key: 'wavtokenizer' as const, label: (t.models as any).tabWavtokenizer || 'Vocoder' },
+            { key: 'mtp' as const, label: t.models.tabMtp },
+            { key: 'mtp-assistant' as const, label: t.models.tabMtpAssistant },
           ].map(tab => (
             <TouchableOpacity
               key={tab.key}
@@ -420,7 +553,7 @@ export default function ModelScreen() {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
         {(filteredModels || []).length === 0 && (
           <Text style={[s.empty, { color: c.textSecondary }]}>{t.models.noModels}</Text>
         )}
@@ -442,7 +575,7 @@ export default function ModelScreen() {
                 <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary }]} onPress={() => handleRenameOpen(model)}>
                   <Text style={[s.btnTxt, { color: c.textSecondary }]}>{t.models.rename}</Text>
                 </TouchableOpacity>
-                {activeTab !== 'mmproj' && activeTab !== 'wavtokenizer' && (
+                {activeTab !== 'mmproj' && activeTab !== 'wavtokenizer' && activeTab !== 'mtp-assistant' && (
                   isActive ? (
                     <TouchableOpacity style={[s.btn, { borderColor: c.error }]} onPress={unloadModel}>
                       <Text style={[s.btnTxt, { color: c.error }]}>{t.models.unload}</Text>
@@ -490,6 +623,44 @@ export default function ModelScreen() {
                         </Text>
                       </TouchableOpacity>
                     </View>
+                  ) : activeTab === 'mtp' ? (
+                    <>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <TouchableOpacity
+                          style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                          onPress={() => setMtpAssistantPickerTarget(model.id)}
+                        >
+                          <Text style={{ color: (model as any).mtpAssistantFilename ? c.text : c.textSecondary, fontSize: 14 }}>
+                            {(model as any).mtpAssistantFilename || t.models.selectMtpAssistant}
+                          </Text>
+                          <Text style={{ color: c.textSecondary }}>›</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, backgroundColor: (model as any).mtpAssistantLocalPath ? c.error : c.primary }}
+                          onPress={(model as any).mtpAssistantLocalPath ? () => handleRemoveMtpAssistant(model) : () => handleImportMtpAssistant(model)}
+                          disabled={importingFor === model.id}
+                        >
+                          <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>
+                            {importingFor === model.id ? '...' : (model as any).mtpAssistantLocalPath ? t.models.removeMtpAssistant : t.models.importMtpAssistant}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 10 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <Switch value={autoLoadConfig?.id === model.id} onValueChange={v => {
+                            if (v) {
+                              const cfg = { id: model.id, path: model.localPath || '', mmprojPath: model.mmprojLocalPath, vocoderPath: (model as any).vocoderLocalPath }
+                              AsyncStorage.setItem(AUTO_LOAD_KEY, JSON.stringify(cfg)).catch(() => {})
+                              setAutoLoadConfig(cfg)
+                            } else {
+                              AsyncStorage.removeItem(AUTO_LOAD_KEY).catch(() => {})
+                              setAutoLoadConfig(null)
+                            }
+                          }} />
+                          <Text style={{ color: c.text, fontSize: 14 }}>{t.models.autoLoad}</Text>
+                        </View>
+                      </View>
+                    </>
                   ) : (
                     <>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -570,6 +741,67 @@ export default function ModelScreen() {
             <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{ttsDownloadStatus}</Text>
             <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border }}>
               <View style={{ width: `${ttsDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'mtp' && !mtpDownloading && (
+          <>
+            <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+              <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 Qwen3.5 4B MTP</Text>
+              <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>4.3GB</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={() => handleMtpDownloadLocal({ repo: 'unsloth/Qwen3.5-4B-MTP-GGUF', filename: 'Qwen3.5-4B-Q8_0.gguf', id: 'Qwen3.5-4B-MTP', name: 'Qwen3.5 4B MTP' })}>
+                  <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ 下载</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]} onPress={() => Linking.openURL(getModelDownloadUrl('unsloth/Qwen3.5-4B-MTP-GGUF', 'Qwen3.5-4B-Q8_0.gguf'))}>
+                  <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+              <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 Gemma 4 E2B QAT</Text>
+              <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>~3.35GB</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={() => handleMtpDownloadLocal({ repo: 'google/gemma-4-E2B-it-qat-q4_0-gguf', filename: 'gemma-4-E2B_q4_0-it.gguf', id: 'gemma-4-e2b-qat', name: 'Gemma 4 E2B QAT' })}>
+                  <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ 下载</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]} onPress={() => Linking.openURL(getModelDownloadUrl('google/gemma-4-E2B-it-qat-q4_0-gguf', 'gemma-4-E2B_q4_0-it.gguf'))}>
+                  <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        )}
+        {activeTab === 'mtp' && mtpDownloading && (
+          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.primary }]}>
+            <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{mtpDownloadStatus}</Text>
+            <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border }}>
+              <View style={{ width: `${mtpDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
+            </View>
+          </View>
+        )}
+
+        {activeTab === 'mtp-assistant' && !mtpAssistantDownloading && (
+          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+            <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 Gemma 4 E2B MTP Assistant</Text>
+            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>76.5MB</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={() => handleMtpDraftDownloadLocal()}>
+                <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ 下载</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]} onPress={() => Linking.openURL(getModelDownloadUrl('lym00/gemma-4-E2B-it-qat-q4_0-unquantized-assistant-gguf-test', 'gemma-4-E2B-it-qat-assistant-q4_0.gguf'))}>
+                <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+        {activeTab === 'mtp-assistant' && mtpAssistantDownloading && (
+          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.primary }]}>
+            <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{mtpAssistantDownloadStatus}</Text>
+            <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border }}>
+              <View style={{ width: `${mtpAssistantDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
             </View>
           </View>
         )}
@@ -702,6 +934,37 @@ export default function ModelScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* MTP Assistant 选择器 */}
+      <Modal visible={mtpAssistantPickerTarget !== null} transparent animationType="fade" onRequestClose={() => setMtpAssistantPickerTarget(null)}>
+        <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setMtpAssistantPickerTarget(null)}>
+          <View style={[s.modal, { backgroundColor: c.surface }]}>
+            <View style={[s.modalHdr, { borderBottomColor: c.border }]}>
+              <Text style={[s.modalTtl, { color: c.text }]}>{t.models.selectMtpAssistant}</Text>
+              <TouchableOpacity onPress={() => setMtpAssistantPickerTarget(null)}>
+                <Text style={{ color: c.primary, fontSize: 16, fontWeight: '600' }}>{t.common.close}</Text>
+              </TouchableOpacity>
+            </View>
+            {availableMtpAssistantFiles.length === 0 ? (
+              <Text style={{ color: c.textSecondary, textAlign: 'center', padding: 20 }}>{t.models.noMtpAssistant}</Text>
+            ) : (
+              <FlatList
+                data={availableMtpAssistantFiles}
+                keyExtractor={item => item.path}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{ paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.border }}
+                    onPress={() => handleMtpAssistantSelect(mtpAssistantPickerTarget!, item.path, item.label)}
+                  >
+                    <Text style={{ color: c.text, fontSize: 15 }}>{item.label}</Text>
+                  </TouchableOpacity>
+                )}
+                style={{ maxHeight: 300 }}
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   )
 }
@@ -731,8 +994,8 @@ const s = StyleSheet.create({
   copyBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, marginLeft: 8 },
   copyBtnTxt: { fontSize: 12, color: '#FFF', fontWeight: '600' },
   infoVal: { fontSize: 13, fontFamily: 'Courier', lineHeight: 18 },
-  tabRow: { flexDirection: 'row', paddingVertical: 10, gap: 8 },
-  tab: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, alignItems: 'center' },
+  tabRow: { paddingVertical: 10, paddingLeft: 16 },
+  tab: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, borderWidth: 1, alignItems: 'center', marginRight: 8 },
   tabTxt: { fontSize: 13, fontWeight: '600' },
   tag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   tagTxt: { fontSize: 11, fontWeight: '600' },

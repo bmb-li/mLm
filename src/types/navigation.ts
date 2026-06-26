@@ -19,6 +19,7 @@ export type RootStackParamList = {
   TTS: undefined
   Bench: undefined
   StressTest: undefined
+  MTPSpeculative: undefined
   ExamplesGallery: undefined
   ServerLogs: undefined
   APISetup: undefined

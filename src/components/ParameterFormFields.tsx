@@ -9,7 +9,6 @@ import {
 } from 'react-native'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
-import { useI18n } from '../contexts/I18nContext'
 
 interface ParameterTextInputProps {
   label: string
@@ -54,48 +53,6 @@ interface ParameterSwitchProps {
   onValueChange: (value: boolean) => void
 }
 
-export function ParameterSwitch({
-  label,
-  description,
-  value,
-  onValueChange,
-}: ParameterSwitchProps) {
-  const { theme } = useTheme()
-  const themedStyles = createThemedStyles(theme.colors)
-
-  const styles = StyleSheet.create({
-    switchRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    switchInfo: {
-      flex: 1,
-      marginRight: 12,
-    },
-  })
-
-  return (
-    <View style={themedStyles.paramGroup}>
-      <View style={styles.switchRow}>
-        <View style={styles.switchInfo}>
-          <Text style={themedStyles.paramLabel}>{label}</Text>
-          <Text style={themedStyles.paramDescription}>{description}</Text>
-        </View>
-        <Switch
-          value={value}
-          onValueChange={onValueChange}
-          trackColor={{
-            false: theme.colors.border,
-            true: theme.colors.primary,
-          }}
-          thumbColor={theme.colors.white}
-        />
-      </View>
-    </View>
-  )
-}
-
 interface StopSequenceFieldProps {
   stopSequences: string[]
   onUpdateStopSequence: (index: number, value: string) => void
@@ -110,7 +67,6 @@ export function StopSequenceField({
   onAddStopSequence,
 }: StopSequenceFieldProps) {
   const { theme } = useTheme()
-  const { t } = useI18n()
   const themedStyles = createThemedStyles(theme.colors)
 
   const styles = StyleSheet.create({
@@ -150,9 +106,9 @@ export function StopSequenceField({
 
   return (
     <View style={themedStyles.paramGroup}>
-      <Text style={themedStyles.paramLabel}>{t.params.stopSeq}</Text>
+      <Text style={themedStyles.paramLabel}>Stop Sequences</Text>
       <Text style={themedStyles.paramDescription}>
-        {t.params.stopSeqDesc}
+        Text sequences that will stop generation when encountered.
       </Text>
 
       {stopSequences.map((stopSeq, index) => (
@@ -161,7 +117,7 @@ export function StopSequenceField({
             style={[themedStyles.textInput, styles.stopSequenceInput]}
             value={stopSeq}
             onChangeText={(text) => onUpdateStopSequence(index, text)}
-            placeholder={t.params.stopSeqPlaceholder}
+            placeholder="Enter stop sequence"
             placeholderTextColor={theme.colors.textSecondary}
             autoCorrect={false}
             autoComplete="off"
@@ -172,14 +128,56 @@ export function StopSequenceField({
             style={styles.removeButton}
             onPress={() => onRemoveStopSequence(index)}
           >
-            <Text style={styles.removeButtonText}>{t.params.stopSeqRemove}</Text>
+            <Text style={styles.removeButtonText}>Remove</Text>
           </TouchableOpacity>
         </View>
       ))}
 
       <TouchableOpacity style={styles.addButton} onPress={onAddStopSequence}>
-        <Text style={styles.addButtonText}>{t.params.stopSeqAdd}</Text>
+        <Text style={styles.addButtonText}>Add Stop Sequence</Text>
       </TouchableOpacity>
+    </View>
+  )
+}
+
+export function ParameterSwitch({
+  label,
+  description,
+  value,
+  onValueChange,
+}: ParameterSwitchProps) {
+  const { theme } = useTheme()
+  const themedStyles = createThemedStyles(theme.colors)
+
+  const styles = StyleSheet.create({
+    switchRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    switchInfo: {
+      flex: 1,
+      marginRight: 12,
+    },
+  })
+
+  return (
+    <View style={themedStyles.paramGroup}>
+      <View style={styles.switchRow}>
+        <View style={styles.switchInfo}>
+          <Text style={themedStyles.paramLabel}>{label}</Text>
+          <Text style={themedStyles.paramDescription}>{description}</Text>
+        </View>
+        <Switch
+          value={value}
+          onValueChange={onValueChange}
+          trackColor={{
+            false: theme.colors.border,
+            true: theme.colors.primary,
+          }}
+          thumbColor={theme.colors.white}
+        />
+      </View>
     </View>
   )
 }

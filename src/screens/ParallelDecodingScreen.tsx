@@ -138,7 +138,7 @@ export default function ParallelDecodingScreen({
   const availableModels = useMemo(() =>
     (customModels || []).filter(m => {
       const p = m.localPath || ''
-      return p.includes('/llm/') || p.includes('/mmproj/')
+      return p.includes('/llm/')
     }),
   [customModels])
 

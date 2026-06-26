@@ -41,6 +41,20 @@ export const MODELS = {
     mmproj: 'mmproj-SmolVLM2-2.2B-Instruct-Q8_0.gguf',
     size: '1.8GB (model) + 565MB (mmproj)',
   },
+  QWEN_3_5_4B_MTP: {
+    name: 'Qwen3.5 4B MTP (Q8_0)',
+    repo: 'unsloth/Qwen3.5-4B-MTP-GGUF',
+    filename: 'Qwen3.5-4B-Q8_0.gguf',
+    mmproj: undefined,
+    size: '4.3GB',
+  },
+  QWEN_3_6_35B_A3B_MTP: {
+    name: 'Qwen3.6 35B A3B MTP (Q8_0)',
+    repo: 'unsloth/Qwen3.6-35B-A3B-MTP-GGUF',
+    filename: 'Qwen3.6-35B-A3B-Q8_0.gguf',
+    mmproj: undefined,
+    size: '37.8GB',
+  },
   INTERNVL3_2B: {
     name: 'InternVL3 2B (Q8_0)',
     repo: 'ggml-org/InternVL3-2B-Instruct-GGUF',

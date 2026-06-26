@@ -87,6 +87,12 @@ export type TranslationStrings = {
     tabMmproj: string
     tabTts: string
     tabWavtokenizer: string
+    tabMtp: string
+    tabMtpAssistant: string
+    selectMtpAssistant: string
+    noMtpAssistant: string
+    removeMtpAssistant: string
+    importMtpAssistant: string
     vision: string
     audio: string
     mmprojSelect: string
@@ -376,6 +382,45 @@ export type TranslationStrings = {
     rapidContextRelease: string
     releaseInCallback: string
     stopBeforeRelease: string
+    // MTP Speculative
+    mtpSpeculative: string
+    mtpSpeculativeDesc: string
+    mtpModelsEmbedded: string
+    targetDraftMtpModels: string
+    addCustomMtpModel: string
+    initializingMtpModel: string
+    initializeMtpPair: string
+    mtpRequirements: string
+    mtpRequirementsDesc: string
+    parallelSlots: string
+    parallelSlotsDesc: string
+    parallelSlotsAfterInit: string
+    draftTokens: string
+    draftTokensDesc: string
+    maxTokens: string
+    maxTokensDesc: string
+    mtpSpeculation: string
+    mtpSpeculationDesc: string
+    prompts: string
+    enterPromptPerLine: string
+    generateInParallel: string
+    stopRequests: string
+    output: string
+    outputPlaceholder: string
+    mtpMetrics: string
+    metricsRequests: string
+    metricsSlots: string
+    metricsGenerated: string
+    metricsDrafted: string
+    metricsAccepted: string
+    metricsAcceptRate: string
+    metricsWall: string
+    metricsThroughput: string
+    metricsPrompt: string
+    metricsGeneration: string
+    customModels: string
+    mtpLimitation: string
+    mtpLimitationDesc: string
     // Tool Calls
     toolExecutionRequest: string
     toolExecutionDeclined: string

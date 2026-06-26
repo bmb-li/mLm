@@ -28,6 +28,7 @@ const EXAMPLE_SCREENS = [
   { routeName: 'TTS', labelKey: 'tts', descKey: 'ttsDesc' as const },
   { routeName: 'Bench', labelKey: 'bench', descKey: 'benchDesc' as const },
   { routeName: 'StressTest', labelKey: 'stressTest', descKey: 'stressTestDesc' as const },
+  { routeName: 'MTPSpeculative', labelKey: 'mtpSpeculative', descKey: 'mtpSpeculativeDesc' as const },
 ]
 
 function formatBytes(bytes: number) {
