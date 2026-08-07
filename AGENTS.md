@@ -161,8 +161,51 @@ if (callbacks.onComplete) {
 
 **注意**：升级 llama.rn 后需要重新应用此修复（用 `git diff` 定位），因为它是**上游尚未合入的定制修改**。检查 `RNLlamaJSI.cpp` 中 `cancelRequest` 函数在 `removeRequest` 之前是否调用了 `onComplete`。
 
+### ✅ 已在上游修复（v0.12.9 起）——无需再打本地补丁
+
+我们已将此 bug 上报上游（Issue #373），上游在 **v0.12.9** 合入了 commit `b9eebd5`（"fix: settle cancelled parallel completions"，Closes #373），以架构性重写方式正式修复：
+
+- 新增 `cpp/jsi/JSICompletion.h`、`cpp/jsi/JSIRequestManager.h`
+- 重构 `RNLlamaJSI.cpp` 的 `llamaCancelRequest`（返回 `cancel_result`，QUEUED 时调用 `onComplete`）与 `rn-slot-manager`
+- **已在本机 v0.12.9 实测验证：停止按钮不再卡"停止"状态**
+
+**升级 v0.12.9 及以后版本时**：
+- 不再需要手动重新应用 `llamaCancelRequest` 补丁
+- `rsync --delete` 同步 `cpp/` 后，旧补丁会被上游代码自然覆盖，切勿手动叠加旧补丁（会与新版取消机制冲突）
+- 若升级后停止按钮异常，先确认 `llamaCancelRequest` 是否处理了 `QUEUED` 分支并调用 `onComplete`
+
+### ✅ HTP/NPU 卡 80% 已修复（v0.12.9，本机实测通过）
+
+**症状**：选择 HTP（NPU）后端加载模型时，初始化进度卡在 80% 后不再前进。
+
+**根因**：llama.rn 的 HTP backend 是 **FastRPC 架构**——主机侧 `.so`（`librnllama_..._hexagon_opencl.so`）通过 `htp_iface_*.invoke` 调用 DSP 上运行的 skel 固件（`libggml-htp-vXX.so`），二者通过共享的 `cpp/ggml-hexagon/htp/htp_iface.idl` 接口通信。
+
+- llama.cpp 在 commit `a4a206a`（b9982，2026-07-13）**不兼容地改了 IDL**：`start()` 签名 `use_hmx`→`n_hmx`，并新增 `hwinfo()` 方法
+- app 里 `android/app/src/main/assets/ggml-hexagon/` 的旧 skel 是 4月30日 编译的（旧 IDL，无 `hwinfo`）
+- 主机后端调用 `htp_iface_hwinfo` / 新 `start` 时 FastRPC invoke 挂起 → 卡 80%
+- **release tarball 只含主机侧 jniLibs，不含 skel 固件**（CI 将 skel 作为保留 1 天的构建工件单独分发），所以必须自行编译
+
+**修复步骤**（在 `../llama.rn` v0.12.9 源码下）：
+```bash
+./scripts/build-hexagon-htp.sh   # 自动构建 v73/v75/v79/v81 到 bin/arm64-v8a/
+```
+- 工具链要求：`~/.hexagon-sdk/6.4.0.2`（SDK）+ `tools/HEXAGON_Tools/19.0.04/Tools/bin`（hexagon-clang）+ cmake/make，Linux 原生即可，无需 Docker
+- 将产物 `libggml-htp-v73/75/79/81.so` 覆盖到 `android/app/src/main/assets/ggml-hexagon/`
+- **关键校验**：`strings libggml-htp-vXX.so | grep hwinfo` 应命中（新 IDL）；旧 skel 为 0 命中
+- 删除遗留的 `libggml-htp-v69.so`（v69 后端不再支持，脚本明确不构建 v69）
+
+**⚠️ 升级 llama.rn 后必须重新编译 skel**：skel 固件与主机后端 IDL 强耦合，每次 llama.cpp sync 都可能改 IDL。若 HTP 卡 80%，先对比新旧 `htp_iface.idl`，然后重建 skel。
+
+**⚠️ RNLlama.java 的 HTP_LIBS 坑**：本项目 `modules/llama.rn/android/src/main/java/com/rnllama/RNLlama.java` 曾在 `HTP_LIBS` 头部残留 `"libggml-htp-v69.so"`（本地定制，上游无）。`ensureHtpLibraries` 顺序提取，v69 缺失会导致**整个提取中断 → ADSP_LIBRARY_PATH 未设置 → DSP 完全找不到任何 skel**（表现：启动即 `open_mod_table_handle_invoke failed ... No such file`）。已删除该条目，与上游对齐。
+
+**验证日志特征**（`adb logcat | grep rnllama`）：
+- `load_tensors: layer N assigned to device HTP1`、`llama_kv_cache: layer N: dev = HTP1` → 层已上 NPU
+- `Slot 0: Stopped on EOS token` → 生成正常完成
+- 无 `failed to open session` / `failed to create device` → skel 加载成功
+
 ### 经验教训
 
 - **永远先同步 C++ 代码**：仅替换 `.so` 库而不同步 `cpp/` 桥接层，会导致 JNI 函数签名不匹配，模型加载直接崩溃。这是最容易踩的坑。
 - **`llamaCancelRequest` 是典型的上游 bug**：任何版本的 llama.rn 都需要检查这个补丁。升级后务必确认 `RNLlamaJSI.cpp` 中的 `cancelRequest` 是否调用了 `onComplete`。
 - **JSI 桥 vs TurboModules**：llama.rn 使用 JSI（直接注入全局函数）而非 RN TurboModules。调试时关注 `rnllama` 全局 JS 调用是否生效，可通过 `console.log` 在 JS 端验证 `llamaCancelRequest` 是否触发。
+- **v0.12.9 起取消机制已上游修复**：`rsync --delete` 同步 `cpp/` 后会自动覆盖旧补丁，**不要**再手动叠加本地 `llamaCancelRequest` 补丁（会与新版 `cancel_result`/QUEUED 机制冲突）。
