@@ -3,6 +3,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { TCPServer } from '../services/tcp/TCPServer'
 import type { CompletionSettings } from '../services/tcp/settingsBuilder'
 import type { ParsedMessage } from '../services/tcp/messageParser'
+import type {
+  CompletionResult,
+  CompletionTokenData,
+  CompletionTimings,
+  ModelSpeed,
+  OnCompletionToken,
+} from '../services/tcp/types'
 import { loadCustomModels, type CustomModel } from '../utils/storage'
 import { useModelContext } from '../contexts/ModelContext'
 
@@ -18,17 +25,6 @@ interface ServerState {
   toolCallingEnabled: boolean
 }
 
-interface CompletionResult {
-  content: string
-  text: string
-  reasoning_content: string
-  tool_calls?: Array<{
-    id?: string
-    type: 'function'
-    function: { name: string; arguments: string }
-  }>
-}
-
 export function useLocalServer() {
   const [state, setState] = useState<ServerState>({
     isRunning: false,
@@ -41,6 +37,7 @@ export function useLocalServer() {
   })
 
   const [activeModel, setActiveModel] = useState<{ name: string; path: string } | null>(null)
+  const [modelSpeed, setModelSpeed] = useState<ModelSpeed | null>(null)
 
   const serverRef = useRef<TCPServer | null>(null)
   const statusIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -87,7 +84,7 @@ export function useLocalServer() {
   const generateCompletion = useCallback(async (
     messages: ParsedMessage[],
     settings?: CompletionSettings,
-    onToken?: (token: string) => boolean,
+    onToken?: OnCompletionToken,
     modelId?: string,
   ): Promise<CompletionResult> => {
     const mc = modelContextRef.current
@@ -119,6 +116,12 @@ export function useLocalServer() {
 
     const completionParams: any = {
       messages,
+      // Match the in-app chat path: let llama.cpp split reasoning_content out of
+      // the generated text (required for models with non-<think> markup, e.g.
+      // MiniCPM's <|im_start|>think role). Clients can opt out with "none".
+      reasoning_format: settings?.reasoning_format ?? 'auto',
+      ...(settings?.enable_thinking != null && { enable_thinking: settings.enable_thinking }),
+      ...(settings?.chat_template_kwargs != null && { chat_template_kwargs: settings.chat_template_kwargs }),
       n_predict: settings?.n_predict ?? 2048,
       temperature: settings?.temperature ?? 0.7,
       ...(settings?.top_p != null && { top_p: settings.top_p }),
@@ -134,21 +137,74 @@ export function useLocalServer() {
       ...(settings?.tool_choice != null && !toolCallingRef.current && { tool_choice: undefined }),
     }
 
+    // Live output speed: measure from the first streamed token so prompt
+    // processing time is not mixed into the generation rate.
+    let generatedTokens = 0
+    let firstTokenAt = 0
+    let lastSpeedUpdate = 0
+
     const { promise, stop } = await ctx.parallel.completion(
       completionParams,
       onToken ? (_reqId: number, data: any) => {
-        const token = data.token || ''
-        if (token) {
-          if (!onToken(token)) {
-            stop()
+        generatedTokens += 1
+        const now = Date.now()
+        if (!firstTokenAt) firstTokenAt = now
+        if (now - lastSpeedUpdate >= 500) {
+          lastSpeedUpdate = now
+          const elapsedSeconds = (now - firstTokenAt) / 1000
+          if (elapsedSeconds > 0) {
+            setModelSpeed(prev => ({
+              promptPerSecond: prev?.promptPerSecond ?? 0,
+              promptTokens: prev?.promptTokens ?? 0,
+              predictedPerSecond: generatedTokens / elapsedSeconds,
+              predictedTokens: generatedTokens,
+              live: true,
+            }))
           }
+        }
+
+        const delta: CompletionTokenData = {
+          token: data.token || '',
+          content: data.content,
+          reasoning_content: data.reasoning_content,
+          accumulated_text: data.accumulated_text,
+        }
+        if (!onToken(delta)) {
+          stop()
         }
       } : undefined,
     )
 
-    const result = await promise
+    let result: Awaited<typeof promise>
+    try {
+      result = await promise
+    } catch (error) {
+      // Keep the last estimate but stop showing it as live.
+      setModelSpeed(prev => (prev ? { ...prev, live: false } : prev))
+      throw error
+    }
+
+    // Authoritative per-request numbers from llama.rn (`prompt_*` = input,
+    // `predicted_*` = output). They also replace the live estimate above.
+    const timings = (result as { timings?: CompletionTimings }).timings
+    if (timings) {
+      setModelSpeed({
+        promptPerSecond: timings.prompt_per_second || 0,
+        predictedPerSecond: timings.predicted_per_second || 0,
+        promptTokens: timings.prompt_n || 0,
+        predictedTokens: timings.predicted_n || 0,
+        live: false,
+      })
+    }
+    // `accumulated_text` is only present when the native chat parser succeeded.
+    // Without it the parsed content would be missing, so fall back to raw text.
+    const parsed = typeof (result as any).accumulated_text === 'string'
+    const parserProducedNothing = parsed
+      && !result.content
+      && !result.reasoning_content
+      && !(result.tool_calls && result.tool_calls.length > 0)
     return {
-      content: result.content || result.text || '',
+      content: parsed && !parserProducedNothing ? (result.content || '') : (result.text || ''),
       text: result.text || '',
       reasoning_content: result.reasoning_content || '',
       tool_calls: result.tool_calls,
@@ -212,11 +268,13 @@ export function useLocalServer() {
     await mc.unloadModel()
     activeModelRef.current = null
     setActiveModel(null)
+    setModelSpeed(null)
     serverRef.current?.addLog('Model unloaded')
   }, [])
 
   const startServer = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true }))
+    setModelSpeed(null)
 
     try {
       const server = new TCPServer({
@@ -264,6 +322,7 @@ export function useLocalServer() {
   }, [generateCompletion, generateEmbedding, listModels, getModelInfo, loadModel, unloadModel, getActiveModel])
 
   const stopServer = useCallback(async () => {
+    setModelSpeed(null)
     if (statusIntervalRef.current) {
       clearInterval(statusIntervalRef.current)
       statusIntervalRef.current = null
@@ -303,6 +362,7 @@ export function useLocalServer() {
     loadModel,
     unloadModel,
     activeModel,
+    modelSpeed,
     setToolCallingEnabled,
   }
 }

@@ -9,9 +9,10 @@ export function sendHTTPResponse(
   if (socket.destroyed) return
 
   const statusText = getHTTPStatusText(status)
+  const closeAfterResponse = socket.__closeAfterResponse === true
   const responseHeaders: Record<string, string> = {
     'Content-Length': Buffer.byteLength(body, 'utf8').toString(),
-    'Connection': 'keep-alive',
+    'Connection': closeAfterResponse ? 'close' : 'keep-alive',
     'Access-Control-Allow-Origin': '*',
     ...headers,
   }
@@ -23,7 +24,11 @@ export function sendHTTPResponse(
   const response = `HTTP/1.1 ${status} ${statusText}\r\n${headerLines}\r\n\r\n${body}`
 
   try {
-    socket.write(response)
+    if (closeAfterResponse) {
+      socket.end(response)
+    } else {
+      socket.write(response)
+    }
   } catch {
     try { socket.destroy() } catch {}
   }
@@ -50,8 +55,9 @@ export function sendSSEStart(socket: any, status: number = 200): void {
   const response =
     `HTTP/1.1 ${status} ${getHTTPStatusText(status)}\r\n` +
     `Content-Type: text/event-stream\r\n` +
-    `Cache-Control: no-cache\r\n` +
+    `Cache-Control: no-cache, no-transform\r\n` +
     `Connection: keep-alive\r\n` +
+    `X-Accel-Buffering: no\r\n` +
     `Access-Control-Allow-Origin: *\r\n` +
     `Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n` +
     `Access-Control-Allow-Headers: Content-Type, Authorization\r\n` +
@@ -73,11 +79,26 @@ export function writeSSEEvent(socket: any, data: any): void {
   }
 }
 
+/**
+ * SSE comment line. Per the SSE spec comments start with `:` and are ignored
+ * by clients; they keep intermediaries and client read timeouts alive while
+ * the model is still processing the prompt.
+ */
+export function writeSSEComment(socket: any, comment: string): void {
+  if (socket.destroyed) return
+  try {
+    socket.write(`: ${comment}\n\n`)
+  } catch {
+    try { socket.destroy() } catch {}
+  }
+}
+
 export function endSSEStream(socket: any): void {
   if (socket.destroyed) return
   try {
-    socket.write(`data: [DONE]\n\n`)
-    socket.end()
+    // `end(data)` flushes the payload before FIN. Writing and then calling
+    // end() can drop the trailing [DONE] on react-native-tcp-socket.
+    socket.end('data: [DONE]\n\n')
   } catch {
     try { socket.destroy() } catch {}
   }
@@ -93,6 +114,8 @@ export function sendChunkedResponseStart(
     `HTTP/1.1 ${status} ${getHTTPStatusText(status)}\r\n` +
     `Content-Type: ${contentType}\r\n` +
     `Transfer-Encoding: chunked\r\n` +
+    `Connection: keep-alive\r\n` +
+    `X-Accel-Buffering: no\r\n` +
     `Access-Control-Allow-Origin: *\r\n` +
     `Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n` +
     `Access-Control-Allow-Headers: Content-Type, Authorization\r\n` +
@@ -121,8 +144,8 @@ export function writeChunk(socket: any, data: string): void {
 export function endChunkedResponse(socket: any): void {
   if (socket.destroyed) return
   try {
-    socket.write(`0\r\n\r\n`)
-    socket.end()
+    // Flush the terminating chunk before FIN (see endSSEStream).
+    socket.end('0\r\n\r\n')
   } catch {
     try { socket.destroy() } catch {}
   }

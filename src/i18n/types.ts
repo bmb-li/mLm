@@ -152,6 +152,9 @@ export type TranslationStrings = {
     copyUrl: string
     shareLink: string
     connectedPeers: string
+    modelSpeed: string
+    inputSpeed: string
+    outputSpeed: string
     uptime: string
     serverLogs: string
     qrCodeTitle: string

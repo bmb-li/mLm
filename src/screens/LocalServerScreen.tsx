@@ -10,11 +10,15 @@ import { useLocalServer } from '../hooks/useLocalServer'
 
 const AUTO_SERVER_KEY = '@llama_auto_start_server'
 
+const formatSpeed = (value: number) => (
+  Number.isFinite(value) ? value.toFixed(1) : '—'
+)
+
 export default function LocalServerScreen() {
   const { theme } = useTheme()
   const { t } = useI18n()
   const colors = theme.colors
-  const { state, startServer, stopServer, activeModel, setToolCallingEnabled } = useLocalServer()
+  const { state, startServer, stopServer, activeModel, modelSpeed, setToolCallingEnabled } = useLocalServer()
   const [keepAwake, setKeepAwake] = useState(false)
   const [autoStart, setAutoStart] = useState(false)
 
@@ -124,6 +128,28 @@ export default function LocalServerScreen() {
                 </View>
                 <Text style={{ color: colors.textSecondary, fontSize: 20 }}>›</Text>
               </TouchableOpacity>
+            </>
+          )}
+          {state.isRunning && (
+            <>
+              <View style={[styles.separator, { backgroundColor: colors.background }]} />
+              <View style={styles.settingItem}>
+                <View style={styles.settingLeft}>
+                  <View style={[styles.iconContainer, { backgroundColor: colors.card }]}>
+                    <Text style={{ fontSize: 22 }}>📊</Text>
+                  </View>
+                  <View style={styles.settingTextContainer}>
+                    <Text style={[styles.settingText, { color: colors.text }]}>
+                      {t.server.modelSpeed}
+                    </Text>
+                    <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                      {modelSpeed
+                        ? `${t.server.inputSpeed} ${formatSpeed(modelSpeed.promptPerSecond)} tok/s · ${t.server.outputSpeed} ${formatSpeed(modelSpeed.predictedPerSecond)} tok/s`
+                        : '—'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
             </>
           )}
         </SettingsSection>

@@ -17,6 +17,7 @@ import { handleChatRequest, handleGenerateRequest } from './chatHandlers'
 import { handleShowRequest, handleEmbeddingsRequest } from './modelManagementHandlers'
 import type { CompletionSettings } from './settingsBuilder'
 import type { ParsedMessage } from './messageParser'
+import type { CompletionResult, OnCompletionToken } from './types'
 
 interface ServerStatus {
   isRunning: boolean
@@ -25,22 +26,11 @@ interface ServerStatus {
   clientCount: number
 }
 
-interface CompletionResult {
-  content: string
-  text: string
-  reasoning_content: string
-  tool_calls?: Array<{
-    id?: string
-    type: 'function'
-    function: { name: string; arguments: string }
-  }>
-}
-
 interface ServerContext {
   generateCompletion: (
     messages: ParsedMessage[],
     settings?: CompletionSettings,
-    onToken?: (token: string) => boolean,
+    onToken?: OnCompletionToken,
     modelId?: string,
   ) => Promise<CompletionResult>
   generateEmbedding: (input: string) => Promise<number[]>
@@ -58,6 +48,7 @@ export class TCPServer {
   private isRunningValue: boolean = false
   private localIP: string = '0.0.0.0'
   private clientSockets: Map<string, Buffer> = new Map()
+  private continueSent: Set<string> = new Set()
   private pendingSockets: Set<any> = new Set()
   private loggedInfo: boolean = false
   private logEntries: string[] = []
@@ -185,6 +176,7 @@ export class TCPServer {
     })
     this.clients.clear()
     this.clientSockets.clear()
+    this.continueSent.clear()
 
     if (this.server) {
       try {
@@ -286,12 +278,14 @@ export class TCPServer {
     socket.on('close', () => {
       this.clients.delete(peerId)
       this.clientSockets.delete(peerId)
+      this.continueSent.delete(peerId)
       this.addLog(`Client disconnected: ${peerId}`)
     })
 
     socket.on('error', () => {
       this.clients.delete(peerId)
       this.clientSockets.delete(peerId)
+      this.continueSent.delete(peerId)
     })
   }
 
@@ -299,30 +293,54 @@ export class TCPServer {
     const existing = this.clientSockets.get(peerId) || Buffer.alloc(0)
     const buffer = Buffer.concat([existing, chunk])
 
-    while (true) {
-      const text = buffer.toString('utf8')
-      if (this.isHTTPRequest(text)) {
-        const parsed = parseHTTPRequest(buffer)
-        if (parsed.needsMoreData) {
-          this.clientSockets.set(peerId, buffer)
-          return
-        }
-
-        if (parsed.request) {
-          this.clientSockets.set(peerId, parsed.remainingBuffer)
-          if (parsed.request.method === 'POST') {
-            this.recordDebugRequest(socket, parsed.request.method, parsed.request.path, parsed.request.body)
-          }
-          this.handleHTTPRequestSync(socket, parsed.request.method, parsed.request.path, parsed.request.body)
-        }
-
-        if (parsed.remainingBuffer.length === 0) {
-          this.clientSockets.delete(peerId)
-        }
-        return
-      }
+    const text = buffer.toString('utf8')
+    if (!this.isHTTPRequest(text)) {
       this.clientSockets.delete(peerId)
       return
+    }
+
+    const parsed = parseHTTPRequest(buffer)
+
+    if (parsed.error) {
+      this.clientSockets.delete(peerId)
+      sendJSONResponse(socket, 400, { error: parsed.error })
+      return
+    }
+
+    // Some clients (notably .NET/Java HTTP stacks) wait for an interim
+    // `100 Continue` before transmitting a large body.
+    if (parsed.expectContinue && parsed.needsMoreData) {
+      if (!this.continueSent.has(peerId)) {
+        this.continueSent.add(peerId)
+        try { socket.write('HTTP/1.1 100 Continue\r\n\r\n') } catch {}
+      }
+      this.clientSockets.set(peerId, buffer)
+      return
+    }
+
+    if (parsed.needsMoreData) {
+      this.clientSockets.set(peerId, buffer)
+      return
+    }
+
+    this.continueSent.delete(peerId)
+
+    if (!parsed.request) {
+      this.clientSockets.delete(peerId)
+      return
+    }
+
+    this.clientSockets.set(peerId, parsed.remainingBuffer)
+    if (parsed.request.method === 'POST') {
+      this.recordDebugRequest(socket, parsed.request.method, parsed.request.path, parsed.request.body)
+    }
+    if ((parsed.request.headers.connection || '').toLowerCase() === 'close') {
+      socket.__closeAfterResponse = true
+    }
+    this.handleHTTPRequestSync(socket, parsed.request.method, parsed.request.path, parsed.request.body)
+
+    if (parsed.remainingBuffer.length === 0) {
+      this.clientSockets.delete(peerId)
     }
   }
 
@@ -333,6 +351,11 @@ export class TCPServer {
     if (method === 'GET' && path === '/') { sendHTTPResponse(socket, 200, { 'Content-Type': 'text/html; charset=utf-8' }, getHomepageHTML()); return }
     if (method === 'GET' && path === '/v1/models') { this.handleModelsList(socket); return }
     if (method === 'GET' && path === '/api/status') { this.handleServerStatus(socket); return }
+    if (method === 'GET' && path === '/api/version') { sendJSONResponse(socket, 200, { version: '0.5.3' }); return }
+    if (method === 'GET' && (path === '/health' || path === '/v1/health')) {
+      sendJSONResponse(socket, 200, { status: 'ok' })
+      return
+    }
     if (method === 'GET' && path === '/api/tags') { this.handleApiTags(socket); return }
     if (method === 'GET' && path === '/api/ps') { this.handleApiPs(socket); return }
     if (method === 'GET' && path === '/api/debug') { this.handleDebugLogs(socket); return }
@@ -443,7 +466,7 @@ export class TCPServer {
         body, socket, method, path,
         async (messages, settings, onToken) => {
           const result = await this.ctx.generateCompletion(messages, settings, onToken, modelId)
-          return result.content
+          return result
         },
         (s, st, msg) => sendJSONResponse(s, st, { error: msg }),
       )
@@ -455,7 +478,7 @@ export class TCPServer {
         body, socket, method, path,
         async (messages, settings, onToken) => {
           const result = await this.ctx.generateCompletion(messages, settings, onToken, modelId)
-          return result.content
+          return result
         },
         (s, st, msg) => sendJSONResponse(s, st, { error: msg }),
       )

@@ -107,10 +107,19 @@ pre {
   ],
   "stream": true,
   "temperature": 0.7,
-  "max_tokens": 2048
+  "max_tokens": 2048,
+  "reasoning_format": "auto"
 }</code></pre>
+    <p style="margin-top: 8px">Thinking models (Qwen, MiniCPM, DeepSeek, …) return their reasoning separately in
+    <code>reasoning_content</code>; set <code>"reasoning_format": "none"</code> to keep the raw output in
+    <code>content</code> instead.</p>
+    <p>For agent frameworks, prefer <code>"stream": true</code>. The server sends an SSE comment
+    (<code>: keep-alive</code>) every 5 seconds while the model loads or processes a long prompt,
+    which prevents client-side read timeouts. Non-streaming requests have no interim output, so
+    raise the client timeout when generating long answers.</p>
     <h3>Response (streaming)</h3>
-    <pre><code>data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
+    <pre><code>data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"Let me think"},"finish_reason":null}]}
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
 data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{"content":"!"},"finish_reason":null}]}
 data: {"id":"chatcmpl-...","object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop"}]}
 data: [DONE]</code></pre>
@@ -160,6 +169,11 @@ data: [DONE]</code></pre>
   <div class="endpoint">
     <span class="method get">GET</span> <code>/api/version</code>
     <p style="margin-top: 8px">Server version.</p>
+  </div>
+
+  <div class="endpoint">
+    <span class="method get">GET</span> <code>/health</code>
+    <p style="margin-top: 8px">Health check for agent frameworks, load balancers and readiness probes.</p>
   </div>
 
   <div class="footer">
