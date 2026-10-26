@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native'
 import ContextParamsModal from '../components/ContextParamsModal'
-import { ExampleModelSetup } from '../components/ExampleModelSetup'
+import { MinimalModelPicker } from '../components/MinimalModelPicker'
 import { MaskedProgress } from '../components/MaskedProgress'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
@@ -138,7 +138,7 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
       if (modelKey) {
         // Predefined model
         const model = MODELS[modelKey as keyof typeof MODELS]
-        modelName = model.name
+        modelName = model?.name ?? modelPath.split('/').pop() ?? 'Custom Model'
       } else {
         // Custom model - extract name from path
         modelName = modelPath.split('/').pop() || 'Custom Model'
@@ -246,25 +246,13 @@ export default function BenchScreen({ navigation }: { navigation: any }) {
   if (!isModelReady) {
     return (
       <>
-        <ExampleModelSetup
+        <MinimalModelPicker
           description={t.examples.benchDesc}
-          defaultModels={BENCH_MODELS}
-          customModels={customModels || []}
-          availableModels={availableModels}
-          onInitializeCustomModel={(_model, modelPath) =>
-            initializeModel(modelPath)
-          }
-          onInitializeModel={(model, modelPath) =>
-            initializeModel(modelPath, model.key)
-          }
-          onReloadCustomModels={reloadCustomModels}
-          showCustomModelModal={showCustomModelModal}
-          onOpenCustomModelModal={() => setShowCustomModelModal(true)}
-          onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle={t.models.addCustomModel}
+          models={availableModels}
+          onLoad={model => initializeModel((model.localPath || '').replace(/^file:\/\//, ''))}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
+          modelCategoryHint="模型 → 可用模型"
         />
 
         <ContextParamsModal

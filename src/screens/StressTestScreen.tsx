@@ -10,7 +10,7 @@ import {
   StyleSheet,
 } from 'react-native'
 import ContextParamsModal from '../components/ContextParamsModal'
-import { ExampleModelSetup } from '../components/ExampleModelSetup'
+import { MinimalModelPicker } from '../components/MinimalModelPicker'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -196,7 +196,7 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
       let modelName: string
       if (modelKey) {
         const model = MODELS[modelKey as keyof typeof MODELS]
-        modelName = model.name
+        modelName = model?.name ?? modelPath.split('/').pop() ?? 'Custom Model'
       } else {
         modelName = modelPath.split('/').pop() || 'Custom Model'
       }
@@ -979,25 +979,13 @@ export default function StressTestScreen({ navigation }: { navigation: any }) {
   if (!isModelReady) {
     return (
       <>
-        <ExampleModelSetup
+        <MinimalModelPicker
           description={t.examples.stressTestDesc}
-          defaultModels={STRESS_TEST_MODELS}
-          customModels={customModels || []}
-          availableModels={availableModels}
-          onInitializeCustomModel={(_model, modelPath) =>
-            initializeModel(modelPath)
-          }
-          onInitializeModel={(model, modelPath) =>
-            initializeModel(modelPath, model.key)
-          }
-          onReloadCustomModels={reloadCustomModels}
-          showCustomModelModal={showCustomModelModal}
-          onOpenCustomModelModal={() => setShowCustomModelModal(true)}
-          onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle={t.models.addCustomModel}
+          models={availableModels}
+          onLoad={model => initializeModel((model.localPath || '').replace(/^file:\/\//, ''))}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
+          modelCategoryHint="模型 → 可用模型"
         />
 
         <ContextParamsModal

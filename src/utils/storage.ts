@@ -195,7 +195,7 @@ export const resetTTSParams = async (): Promise<void> => {
 const LLM_BASE = RNBlobUtil.fs.dirs.DocumentDir + '/LLMs'
 
 const ensureLLMDirs = async () => {
-  for (const dir of ['llm', 'mmproj', 'tts', 'wavtokenizer', 'mtp', 'mtp-assistant']) {
+  for (const dir of ['llm', 'mmproj', 'tts', 'wavtokenizer', 'mtp', 'mtp-assistant', 'decision']) {
     const p = `${LLM_BASE}/${dir}`
     if (!(await RNBlobUtil.fs.exists(p))) {
       await RNBlobUtil.fs.mkdir(p)
@@ -207,7 +207,7 @@ export const loadCustomModels = async (): Promise<CustomModel[]> => {
   try {
     await ensureLLMDirs()
     const models: CustomModel[] = []
-    const dirs = ['llm', 'mmproj', 'tts', 'wavtokenizer', 'mtp', 'mtp-assistant']
+    const dirs = ['llm', 'mmproj', 'tts', 'wavtokenizer', 'mtp', 'mtp-assistant', 'decision']
     for (const dir of dirs) {
       const dp = `${LLM_BASE}/${dir}`
       if (await RNBlobUtil.fs.exists(dp)) {

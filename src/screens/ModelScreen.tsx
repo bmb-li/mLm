@@ -18,6 +18,16 @@ import { getModelDownloadUrl } from '../utils/constants'
 
 const downloader = new ModelDownloader()
 
+// Typed decision models: answer choice/score/yes-no in one forward pass.
+const DECISION_BUILTIN = [
+  { id: 'Julia-1', name: 'Julia-1 (Q8_0)', repo: 'ggml-org/Julia-1-GGUF', filename: 'Julia-1-Q8_0.gguf', size: '168MB' },
+  { id: 'Laya', name: 'Laya (Q8_0)', repo: 'ggml-org/Laya-GGUF', filename: 'Laya-Q8_0.gguf', size: '449MB' },
+  { id: 'Kev-0.8B', name: 'Kev 0.8B (Q8_0)', repo: 'ggml-org/Kev-0.8B-GGUF', filename: 'Kev-0.8B-Q8_0.gguf', size: '812MB' },
+  { id: 'jevling-0.8b-v1', name: 'Jevling 0.8B v1 (Q8_0)', repo: 'BricksDisplay/jevling-0.8b-v1-GGUF', filename: 'jevling-0.8b-v1-q8_0-embf16.gguf', size: '1.05GB' },
+  { id: 'lev-Q4_K_M', name: 'lev (Q4_K_M)', repo: 'ggml-org/lev-GGUF', filename: 'lev-Q4_K_M.gguf', size: '3.01GB' },
+  { id: 'Kev-4B', name: 'Kev 4B (Q8_0)', repo: 'ggml-org/Kev-4B-GGUF', filename: 'Kev-4B-Q8_0.gguf', size: '4.48GB' },
+]
+
 const AUTO_SERVER_KEY = '@llama_auto_start_server'
 const AUTO_LOAD_KEY = '@llama_auto_load_model'
 
@@ -41,7 +51,7 @@ export default function ModelScreen() {
   const [renameVis, setRenameVis] = useState(false)
   const [renameModel, setRenameModel] = useState<CustomModel | null>(null)
   const [renameText, setRenameText] = useState('')
-  const [activeTab, setActiveTab] = useState<'available' | 'mmproj' | 'tts' | 'wavtokenizer' | 'mtp' | 'mtp-assistant'>('available')
+  const [activeTab, setActiveTab] = useState<'available' | 'mmproj' | 'tts' | 'wavtokenizer' | 'mtp' | 'mtp-assistant' | 'decision'>('available')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [mmprojPickerTarget, setMmprojPickerTarget] = useState<string | null>(null)
   const [vocoderPickerTarget, setVocoderPickerTarget] = useState<string | null>(null)
@@ -97,6 +107,7 @@ export default function ModelScreen() {
       if (activeTab === 'wavtokenizer') return p.includes('/wavtokenizer/')
       if (activeTab === 'mtp') return p.includes('/mtp/')
       if (activeTab === 'mtp-assistant') return p.includes('/mtp-assistant/')
+      if (activeTab === 'decision') return p.includes('/decision/')
       return false
     })
   }, [customModels, activeTab])
@@ -359,8 +370,10 @@ export default function ModelScreen() {
   const [ttsDownloadStatus, setTtsDownloadStatus] = useState('')
   const ttsModelRepo = 'OuteAI/OuteTTS-0.3-500M-GGUF'
   const ttsModelFile = 'OuteTTS-0.3-500M-Q4_K_M.gguf'
-  const ttsVocoderRepo = 'ggml-org/WavTokenizer'
-  const ttsVocoderFile = 'WavTokenizer-Large-75-Q5_1.gguf'
+  // Must match the codec.cpp vocoder backend used by llama.rn 0.13+; the
+  // legacy ggml-org/WavTokenizer export cannot be loaded by it.
+  const ttsVocoderRepo = 'BricksDisplay/codec.cpp-gguf'
+  const ttsVocoderFile = 'wavtokenizer-large-speech-75tokens.gguf'
 
   const handleTtsDownloadLocal = useCallback(async () => {
     try {
@@ -412,6 +425,9 @@ export default function ModelScreen() {
   const [mtpAssistantDownloading, setMtpAssistantDownloading] = useState(false)
   const [mtpAssistantDownloadProgress, setMtpAssistantDownloadProgress] = useState(0)
   const [mtpAssistantDownloadStatus, setMtpAssistantDownloadStatus] = useState('')
+  const [decisionDownloading, setDecisionDownloading] = useState(false)
+  const [decisionDownloadProgress, setDecisionDownloadProgress] = useState(0)
+  const [decisionDownloadStatus, setDecisionDownloadStatus] = useState('')
 
   const handleMtpDownloadLocal = useCallback(async (modelDef: { repo: string; filename: string; id: string; name: string }) => {
     try {
@@ -443,6 +459,39 @@ export default function ModelScreen() {
       setMtpDownloadStatus('')
     }
   }, [t, reloadCustomModels])
+
+  const handleDecisionDownloadLocal = useCallback(async (modelDef: { repo: string; filename: string; id: string; name: string }) => {
+    if (decisionDownloading) return
+    try {
+      setDecisionDownloading(true)
+      setDecisionDownloadProgress(0)
+      setDecisionDownloadStatus(modelDef.name + '...')
+      const downloadedPath = await downloader.downloadModel(modelDef.repo, modelDef.filename, (p) => {
+        setDecisionDownloadProgress(Math.round(p.percentage))
+        setDecisionDownloadStatus(`${p.percentage}%`)
+      })
+      // Downloads land in models/, but the model list scans LLMs/<category>/.
+      const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/decision`
+      if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
+      const destPath = `${destDir}/${modelDef.filename}`
+      const srcPath = downloadedPath.replace(/^file:\/\//, '')
+      if (srcPath !== destPath && (await RNBlobUtil.fs.exists(srcPath))) {
+        if (await RNBlobUtil.fs.exists(destPath)) await RNBlobUtil.fs.unlink(destPath)
+        await RNBlobUtil.fs.mv(srcPath, destPath)
+      }
+      setDecisionDownloadProgress(100)
+      setDecisionDownloadStatus(t.common.success)
+      await reloadCustomModels()
+      setActiveTab('decision')
+      Alert.alert(t.common.success, `${modelDef.name} downloaded!`)
+    } catch (e: any) {
+      Alert.alert(t.common.error, e?.message ?? String(e))
+    } finally {
+      setDecisionDownloading(false)
+      setDecisionDownloadProgress(0)
+      setDecisionDownloadStatus('')
+    }
+  }, [decisionDownloading, reloadCustomModels, t])
 
   const handleMtpDraftDownloadLocal = useCallback(async () => {
     if (mtpAssistantDownloading) return
@@ -493,7 +542,7 @@ export default function ModelScreen() {
         destination: 'documentDirectory',
       })
       if (local.status !== 'success') throw new Error(local.copyError)
-      const dirMap: Record<string, string> = { available: 'llm', mmproj: 'mmproj', tts: 'tts', wavtokenizer: 'wavtokenizer', mtp: 'mtp', 'mtp-assistant': 'mtp-assistant' }
+      const dirMap: Record<string, string> = { available: 'llm', mmproj: 'mmproj', tts: 'tts', wavtokenizer: 'wavtokenizer', mtp: 'mtp', 'mtp-assistant': 'mtp-assistant', decision: 'decision' }
       const subDir = dirMap[activeTab] || 'llm'
       const destDir = `${RNBlobUtil.fs.dirs.DocumentDir}/LLMs/${subDir}`
       if (!(await RNBlobUtil.fs.exists(destDir))) await RNBlobUtil.fs.mkdir(destDir)
@@ -542,6 +591,7 @@ export default function ModelScreen() {
             { key: 'wavtokenizer' as const, label: (t.models as any).tabWavtokenizer || 'Vocoder' },
             { key: 'mtp' as const, label: t.models.tabMtp },
             { key: 'mtp-assistant' as const, label: t.models.tabMtpAssistant },
+            { key: 'decision' as const, label: t.models.tabDecision },
           ].map(tab => (
             <TouchableOpacity
               key={tab.key}
@@ -724,8 +774,8 @@ export default function ModelScreen() {
         </View>
         {activeTab === 'tts' && !ttsDownloading && (
           <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
-            <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 OuteTTS 0.3 500M + WavTokenizer</Text>
-            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>454MB + 70MB</Text>
+            <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 OuteTTS 0.3 500M + WavTokenizer (codec.cpp)</Text>
+            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>454MB + 170MB</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={handleTtsDownloadLocal}>
                 <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ {t.models.ttsModel}</Text>
@@ -804,6 +854,46 @@ export default function ModelScreen() {
               <View style={{ width: `${mtpAssistantDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
             </View>
           </View>
+        )}
+
+        {activeTab === 'decision' && (
+          <>
+            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 8 }}>
+              类型化决策模型：一次前向即可回答选择/评分/是非题，返回校准概率。也可用下方「导入模型」直接导入 GGUF。
+            </Text>
+            {DECISION_BUILTIN.map(def => (
+              <View key={def.id} style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+                <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>{`📥 ${def.name}`}</Text>
+                <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>{def.size}</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[s.btn, { borderColor: c.primary, flex: 1 }]}
+                    onPress={() => handleDecisionDownloadLocal(def)}
+                    disabled={decisionDownloading}
+                  >
+                    <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ 下载</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]}
+                    onPress={() => Linking.openURL(getModelDownloadUrl(def.repo, def.filename))}
+                  >
+                    <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+            {decisionDownloading && (
+              <View style={[s.card, { backgroundColor: c.surface, borderColor: c.primary }]}>
+                <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{decisionDownloadStatus}</Text>
+                <View style={{ height: 6, borderRadius: 3, backgroundColor: c.border }}>
+                  <View style={{ width: `${decisionDownloadProgress}%`, height: 6, borderRadius: 3, backgroundColor: c.primary }} />
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 11, marginTop: 6 }}>
+                  若长时间无进度，请改用「🌐 浏览器下载」，下载后用「导入模型」导入到本分类。
+                </Text>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
 

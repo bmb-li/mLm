@@ -89,6 +89,7 @@ const en: TranslationStrings = {
     tabWavtokenizer: 'Vocoder',
     tabMtp: 'MTP',
     tabMtpAssistant: 'MTP Draft',
+    tabDecision: 'Decision',
     selectMtpAssistant: 'Select MTP Draft',
     noMtpAssistant: 'No MTP Draft files',
     removeMtpAssistant: 'Remove',
@@ -388,6 +389,8 @@ const en: TranslationStrings = {
     // MTP Speculative
     mtpSpeculative: '⚡ MTP Speculative',
     mtpSpeculativeDesc: 'Multi-token prediction speculative decoding with embedded or separate draft models',
+    decision: '🧭 Decision Models',
+    decisionDesc: 'Typed decision models (Julia-1, Laya, Kev, …) answer choice, score and yes/no questions about a state in one forward pass, returning calibrated probabilities instead of generated text',
     mtpModelsEmbedded: 'Embedded MTP Models',
     targetDraftMtpModels: 'Target + Draft MTP Models',
     addCustomMtpModel: 'Add Custom MTP Model',

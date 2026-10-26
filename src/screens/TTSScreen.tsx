@@ -15,7 +15,8 @@ import ContextParamsModal from '../components/ContextParamsModal'
 import CompletionParamsModal from '../components/CompletionParamsModal'
 import TTSParamsModal from '../components/TTSParamsModal'
 import { AudioPlayer } from '../components/AudioPlayer'
-import { ExampleModelSetup } from '../components/ExampleModelSetup'
+import { MaskedProgress } from '../components/MaskedProgress'
+import Icon from '@react-native-vector-icons/material-design-icons'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -39,9 +40,6 @@ import {
 } from '../hooks/useStoredSetting'
 import { useExampleContext } from '../hooks/useExampleContext'
 import { useExampleScreenHeader } from '../hooks/useExampleScreenHeader'
-import { createExampleModelDefinitions } from '../utils/exampleModels'
-
-const TTS_MODELS = createExampleModelDefinitions(['OUTE_TTS_0_3'])
 
 export default function TTSScreen({ navigation }: { navigation: any }) {
   const { theme } = useTheme()
@@ -51,6 +49,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   const [inputText, setInputText] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isVocoderReady, setIsVocoderReady] = useState(false)
+  const [vocoderHintText, setVocoderHintText] = useState('检测中…')
   const [generatedAudio, setGeneratedAudio] = useState<string | null>(null)
   const [audioData, setAudioData] = useState<Float32Array | null>(null)
   const [sampleRate, setSampleRate] = useState<number>(24000)
@@ -75,24 +74,9 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   const availableModels = useMemo(() =>
     (customModels || []).filter(m => {
       const p = m.localPath || ''
-      return p.includes('/tts/') || p.includes('/wavtokenizer/')
+      return p.includes('/tts/')
     }),
   [customModels])
-
-  // 自动检测本地 TTS 模型并加载
-  useEffect(() => {
-    if (isModelReady) return
-    ;(async () => {
-      const base = ReactNativeBlobUtil.fs.dirs.DocumentDir + '/LLMs'
-      const ttsPath = `${base}/tts/OuteTTS-0.3-500M-Q4_K_M.gguf`
-      const vocoderPath = `${base}/wavtokenizer/WavTokenizer-Large-75-Q5_1.gguf`
-      const ttsExists = await ReactNativeBlobUtil.fs.exists(ttsPath).catch(() => false)
-      const vocoderExists = await ReactNativeBlobUtil.fs.exists(vocoderPath).catch(() => false)
-      if (ttsExists && vocoderExists) {
-        initializeModels(ttsPath, vocoderPath)
-      }
-    })()
-  }, [isModelReady])
 
   const handleSaveContextParams = (params: ContextParams) => {
     setContextParams(params)
@@ -197,7 +181,90 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
     ],
   })
 
-  const initializeModels = async (ttsPath: string, vocoderPath: string) => {
+  // Resolve the vocoder GGUF. Loading a model from the local list only hands us
+  // the TTS path, so fall back to an explicit association and then to scanning
+  // the model directories for a WavTokenizer / vocoder GGUF.
+  const resolveVocoderPath = async (explicit?: string) => {
+    if (explicit) {
+      console.log('[TTS] vocoder from model association:', explicit)
+      return explicit
+    }
+    const base = `${ReactNativeBlobUtil.fs.dirs.DocumentDir}/LLMs`
+    const dirs = [`${base}/wavtokenizer`, `${base}/tts`]
+    for (const dir of dirs) {
+      try {
+        const exists = await ReactNativeBlobUtil.fs.exists(dir)
+        if (!exists) {
+          console.log('[TTS] vocoder dir missing:', dir)
+          continue
+        }
+        const files: string[] = await ReactNativeBlobUtil.fs.ls(dir)
+        console.log('[TTS] scanning', dir, '->', JSON.stringify(files))
+        const ggufs = files.filter((f: string) =>
+          f.toLowerCase().endsWith('.gguf'),
+        )
+        // Rank candidates so the codec.cpp export wins over the legacy
+        // ggml-org/WavTokenizer file, which the 0.13+ backend cannot load.
+        const rank = (f: string) => {
+          const n = f.toLowerCase()
+          if (/speech-75tokens|wavtokenizer-large-speech/.test(n)) return 0
+          if (/(codec|dac|soprano|vocoder)/.test(n)) return 1
+          if (/wavtokenizer-large-75-q5_1/.test(n)) return 8 // legacy, unusable
+          if (n.endsWith('.gguf')) return 2
+          return 9
+        }
+        const ranked = ggufs
+          .filter((f: string) => rank(f) < 8)
+          .sort((a: string, b: string) => rank(a) - rank(b))
+        const chosen = ranked[0]
+        if (chosen) {
+          console.log('[TTS] vocoder resolved:', `${dir}/${chosen}`)
+          return `${dir}/${chosen}`
+        }
+        if (ggufs.length > 0) {
+          console.log(
+            '[TTS] only legacy vocoder files found in',
+            dir,
+            '- they are not loadable by codec.cpp:',
+            JSON.stringify(ggufs),
+          )
+        }
+      } catch (e) {
+        console.log('[TTS] scan failed for', dir, e)
+      }
+    }
+    console.log('[TTS] no vocoder model found')
+    return undefined
+  }
+
+  // Show which vocoder will be used, so a missing file is visible before
+  // the user tries to generate speech.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const found = await resolveVocoderPath()
+      if (cancelled) return
+      setVocoderHintText(
+        found ? found.split('/').pop() || found : '未找到（请在模型页导入声码器）',
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const initializeModels = async (ttsPath: string, vocoderPath?: string) => {
+    const resolvedVocoderPath = await resolveVocoderPath(vocoderPath)
+    if (!resolvedVocoderPath) {
+      Alert.alert(
+        t.examples.vocoderFailed,
+        'No compatible vocoder found. Download the codec.cpp vocoder from the Models tab (Vocoder category):\n' +
+          'BricksDisplay/codec.cpp-gguf → wavtokenizer-large-speech-75tokens.gguf\n\n' +
+          'The legacy WavTokenizer-Large-75-Q5_1.gguf from ggml-org/WavTokenizer is not supported by llama.rn 0.13+.',
+      )
+      return
+    }
     try {
       setIsLoading(true)
       setInitProgress(0)
@@ -217,15 +284,47 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
 
       await replaceContext(llamaContext)
 
-      // Initialize vocoder directly after TTS model
+      // Initialize vocoder directly after TTS model.
+      // initVocoder reports failure by returning false (native errors are
+      // swallowed), so the result must be checked — otherwise the UI shows
+      // "ready" while generation throws "Vocoder is not enabled".
+      let vocoderOk = false
       try {
-        await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256 })
-        setIsVocoderReady(true)
+        // Let the codec follow the context's backend selection (n_gpu_layers /
+        // devices from the settings), so GPU/NPU acceleration applies here too.
+        vocoderOk = await llamaContext.initVocoder({
+          path: resolvedVocoderPath,
+          n_batch: 256,
+        })
+        if (!vocoderOk) {
+          // Some backends cannot host the codec graphs; retry on the CPU so a
+          // GPU/NPU selection never blocks synthesis entirely.
+          console.log('[TTS] vocoder on selected backend failed, retrying on CPU')
+          vocoderOk = await llamaContext.initVocoder({
+            path: resolvedVocoderPath,
+            n_batch: 256,
+            use_gpu: false,
+          })
+        }
+        if (!vocoderOk) {
+          vocoderOk = await llamaContext.isVocoderEnabled()
+        }
       } catch (vocoderError) {
         console.log('Vocoder initialization error:', vocoderError)
+        vocoderOk = false
+      }
+      setIsVocoderReady(vocoderOk)
+      console.log('[TTS] initVocoder result:', vocoderOk, resolvedVocoderPath)
+      if (!vocoderOk) {
+        setVocoderHintText(
+          `${resolvedVocoderPath.split('/').pop()} (加载失败：格式可能不兼容)`,
+        )
         Alert.alert(
           t.examples.vocoderFailed,
-          t.examples.vocoderFailed,
+          `无法加载声码器：\n${resolvedVocoderPath.split('/').pop()}\n\n` +
+            'llama.rn 0.13+ 使用 codec.cpp 作为声码器后端，旧的 ggml-org/WavTokenizer ' +
+            '导出格式已不再支持。请在「模型 → 声码器」重新下载 codec.cpp 版本：\n' +
+            'BricksDisplay/codec.cpp-gguf → wavtokenizer-large-speech-75tokens.gguf',
         )
       }
     } catch (error: any) {
@@ -238,21 +337,27 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
 
   const generateSpeech = async () => {
     if (!inputText.trim() || !context || isLoading) return
+    if (!isVocoderReady) {
+      Alert.alert(
+        t.examples.vocoderFailed,
+        'The vocoder is not loaded, so audio tokens cannot be decoded into speech. Pick the vocoder file together with the TTS model before generating.',
+      )
+      return
+    }
 
     try {
       setIsLoading(true)
 
       const text = inputText.trim()
-      // Get formatted prompt and guide tokens using OuteTTS format
-      const { prompt: formattedPrompt, grammar } =
-        await context.getFormattedAudioCompletion(
-          ttsParams?.speakerConfig || null,
-          text,
-        )
-
-      const guideTokens: number[] = await context.getAudioCompletionGuideTokens(
-        text,
-      )
+      // Build formatted audio completion using the OuteTTS-compatible API.
+      // `speakerConfig` (when present) is a raw OuteTTS speaker JSON payload.
+      const { prompt: formattedPrompt, grammar, embedding } =
+        await context.getFormattedAudioCompletion({
+          prompt: text,
+          ...(ttsParams?.speakerConfig
+            ? { speaker: ttsParams.speakerConfig }
+            : {}),
+        })
 
       const collectedTokens: number[] = []
       const params = completionParams || (await loadCompletionParams())
@@ -261,11 +366,11 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         {
           prompt: formattedPrompt,
           grammar,
-          guide_tokens: guideTokens,
+          embedding,
           n_predict: params.n_predict || 4096,
           temperature: params.temperature || 0.7,
           top_p: params.top_p || 0.9,
-          stop: params.stop || ['<|im_end|>'],
+          stop: params.stop || ['<|im_end|>', '<|SPEECH_GENERATION_END|>'],
         },
         (data) => {
           // Collect tokens for potential audio processing
@@ -333,23 +438,61 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   if (!isModelReady) {
     return (
       <>
-        <ExampleModelSetup
-          description={t.examples.ttsDesc}
-          defaultModels={TTS_MODELS}
-          customModels={customModels || []}
-          availableModels={availableModels}
-          onInitializeModel={(_model, ttsPath, vocoderPath) =>
-            initializeModels(ttsPath, vocoderPath)
-          }
-          isLoading={isLoading}
-          initProgress={initProgress}
-          progressText={
-            context
-              ? t.examples.initializingVocoder
-              : t.examples.initializing.replace('{progress}', String(initProgress))
-          }
-          showProgressBar={!context && initProgress > 0}
-        />
+        <ScrollView
+          style={styles.setupScroll}
+          contentContainerStyle={styles.setupContent}
+        >
+          <Text style={styles.setupDescription}>{t.examples.ttsDesc}</Text>
+
+          <Text style={styles.sectionTitle}>
+            {`已导入的 TTS 模型 (${availableModels.length})`}
+          </Text>
+
+          {availableModels.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyStateText}>
+                还没有导入 TTS 模型。请到「模型 → 语音模型」分类下载或导入 OuteTTS GGUF，然后回到本页。
+              </Text>
+              <TouchableOpacity
+                style={styles.emptyAction}
+                onPress={() =>
+                  navigation.navigate('MainTabs', { screen: 'ModelTab' })
+                }
+              >
+                <Text style={styles.emptyActionText}>前往模型页 →</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            availableModels.map(model => (
+              <View key={model.id} style={styles.localModelCard}>
+                <Icon
+                  name="bullseye-arrow"
+                  size={18}
+                  color={theme.colors.primary}
+                />
+                <Text style={styles.localModelName} numberOfLines={1}>
+                  {model.id}
+                </Text>
+                <TouchableOpacity
+                  style={styles.loadButton}
+                  onPress={() =>
+                    initializeModels(
+                      (model.localPath || '').replace(/^file:\/\//, ''),
+                      (model as any).vocoderLocalPath || undefined,
+                    )
+                  }
+                  disabled={isLoading}
+                >
+                  <Text style={styles.loadButtonText}>加载</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+
+          <Text style={styles.vocoderHint}>
+            {`声码器：${vocoderHintText}`}
+          </Text>
+        </ScrollView>
 
         <ContextParamsModal
           visible={showContextParamsModal}
@@ -361,6 +504,20 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
           visible={showTTSParamsModal}
           onClose={() => setShowTTSParamsModal(false)}
           onSave={handleSaveTTSParams}
+        />
+
+        <MaskedProgress
+          visible={isLoading}
+          text={
+            context
+              ? t.examples.initializingVocoder
+              : t.examples.initializing.replace(
+                  '{progress}',
+                  String(initProgress),
+                )
+          }
+          progress={initProgress}
+          showProgressBar={!context && initProgress > 0}
         />
       </>
     )
@@ -570,6 +727,64 @@ function createStyles(
     },
     generateButtonDisabled: {
       backgroundColor: theme.colors.disabled,
+    },
+    setupScroll: { flex: 1 },
+    setupContent: { padding: 16, paddingBottom: 32 },
+    emptyCard: {
+      padding: 14,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.card,
+    },
+    emptyStateText: {
+      fontSize: 13,
+      lineHeight: 19,
+      color: theme.colors.textSecondary,
+    },
+    emptyAction: {
+      marginTop: 10,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: theme.colors.primary,
+    },
+    emptyActionText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: '#FFF',
+    },
+    localModelCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      marginBottom: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.card,
+    },
+    localModelName: {
+      flex: 1,
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.colors.text,
+    },
+    loadButton: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 8,
+      backgroundColor: theme.colors.primary,
+    },
+    loadButtonText: { fontSize: 13, fontWeight: '700', color: '#FFF' },
+    vocoderHint: {
+      marginTop: 8,
+      fontSize: 12,
+      lineHeight: 17,
+      color: theme.colors.textSecondary,
     },
     audioSection: {
       marginBottom: 24,

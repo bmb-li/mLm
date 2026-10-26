@@ -108,7 +108,11 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
 
       if (vocoderPath) {
         writeLogRef.current?.('MODEL', 'initVocoder start')
-        const vocoderOk = await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256 })
+        let vocoderOk = await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256 })
+        if (!vocoderOk) {
+          writeLogRef.current?.('MODEL', 'vocoder: retrying on CPU')
+          vocoderOk = await llamaContext.initVocoder({ path: vocoderPath, n_batch: 256, use_gpu: false })
+        }
         writeLogRef.current?.('MODEL', `initVocoder done: ${vocoderOk}`)
         setVocoderReady(vocoderOk)
       }
@@ -159,7 +163,8 @@ export function ModelProvider({ children }: { children: React.ReactNode }) {
   const initVocoder = useCallback(async (path: string): Promise<boolean> => {
     if (!contextRef.current) return false
     try {
-      const ok = await contextRef.current.initVocoder({ path, n_batch: 256 })
+      let ok = await contextRef.current.initVocoder({ path, n_batch: 256 })
+      if (!ok) ok = await contextRef.current.initVocoder({ path, n_batch: 256, use_gpu: false })
       setVocoderReady(ok)
       return ok
     } catch {

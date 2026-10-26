@@ -11,7 +11,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import ReactNativeBlobUtil from 'react-native-blob-util'
-import { ExampleModelSetup } from '../components/ExampleModelSetup'
+import { MinimalModelPicker } from '../components/MinimalModelPicker'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
 import { createThemedStyles } from '../styles/commonStyles'
@@ -663,25 +663,13 @@ export default function ParallelDecodingScreen({
   if (!isModelReady) {
     return (
       <>
-        <ExampleModelSetup
+        <MinimalModelPicker
           description={t.examples.parallelDecodingDesc}
-          defaultModels={PARALLEL_MODELS}
-          customModels={customModels || []}
-          availableModels={availableModels}
-          onInitializeCustomModel={(_model, modelPath, mmprojPath) =>
-            initializeModel(modelPath, mmprojPath)
-          }
-          onInitializeModel={(_model, modelPath, mmprojPath) =>
-            initializeModel(modelPath, mmprojPath)
-          }
-          onReloadCustomModels={reloadCustomModels}
-          showCustomModelModal={showCustomModelModal}
-          onOpenCustomModelModal={() => setShowCustomModelModal(true)}
-          onCloseCustomModelModal={() => setShowCustomModelModal(false)}
-          customModelModalTitle={t.models.addCustomModel}
+          models={availableModels}
+          onLoad={(_model, path) => initializeModel(path)}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
+          modelCategoryHint="模型 → 可用模型"
         />
 
         <ContextParamsModal

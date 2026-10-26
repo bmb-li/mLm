@@ -89,6 +89,7 @@ const zh: TranslationStrings = {
     tabWavtokenizer: '声码器',
     tabMtp: 'MTP 模型',
     tabMtpAssistant: 'MTP 草稿',
+    tabDecision: '决策模型',
     selectMtpAssistant: '选择 MTP 草稿',
     noMtpAssistant: '没有 MTP 草稿文件',
     removeMtpAssistant: '移除',
@@ -382,6 +383,8 @@ const zh: TranslationStrings = {
     // MTP Speculative
     mtpSpeculative: '⚡ MTP 投机解码',
     mtpSpeculativeDesc: '使用嵌入式或独立草稿模型的多 token 预测投机解码',
+    decision: '🧭 决策模型',
+    decisionDesc: '类型化决策模型（Julia-1/Laya/Kev 等）：一次前向即可对给定内容回答选择、评分、是非题，并返回校准概率，而不是生成文本',
     mtpModelsEmbedded: '嵌入式 MTP 模型',
     targetDraftMtpModels: '目标 + 草稿 MTP 模型',
     addCustomMtpModel: '添加自定义 MTP 模型',

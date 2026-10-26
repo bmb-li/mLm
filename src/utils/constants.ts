@@ -91,15 +91,17 @@ export const MODELS = {
     size: '808MB (model) + 1.37GB (mmproj)',
   },
   OUTE_TTS_0_3: {
-    name: 'OuteTTS 0.3 500M (Q4_K_M) + WavTokenizer (Q5_1)',
+    name: 'OuteTTS 0.3 500M (Q4_K_M) + WavTokenizer (FP16)',
     repo: 'OuteAI/OuteTTS-0.3-500M-GGUF',
     filename: 'OuteTTS-0.3-500M-Q4_K_M.gguf',
     mmproj: undefined,
-    size: '454MB (model) + 70MB (vocoder)',
+    size: '454MB (model) + 170MB (vocoder)',
+    // Must be the codec.cpp GGUF: the legacy ggml-org/WavTokenizer export is
+    // not loadable by the codec.cpp vocoder backend used since llama.rn 0.13.
     vocoder: {
-      repo: 'ggml-org/WavTokenizer',
-      filename: 'WavTokenizer-Large-75-Q5_1.gguf',
-      size: '70MB',
+      repo: 'BricksDisplay/codec.cpp-gguf',
+      filename: 'wavtokenizer-large-speech-75tokens.gguf',
+      size: '170MB',
     },
   },
   EMBEDDINGGEMMA_300M: {
@@ -141,6 +143,56 @@ export const MODELS = {
     mmproj: undefined,
     ranking: true,
     size: '636MB',
+  },
+  // Typed decision models (decide()) — small enough for a phone, smallest first.
+  // https://huggingface.co/blog/ggml-org/decision-models-in-llamacpp
+  JULIA_1: {
+    name: 'Julia-1 (Q8_0)',
+    repo: 'ggml-org/Julia-1-GGUF',
+    filename: 'Julia-1-Q8_0.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '168MB',
+  },
+  LAYA: {
+    name: 'Laya (Q8_0)',
+    repo: 'ggml-org/Laya-GGUF',
+    filename: 'Laya-Q8_0.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '449MB',
+  },
+  KEV_0_8B: {
+    name: 'Kev 0.8B (Q8_0)',
+    repo: 'ggml-org/Kev-0.8B-GGUF',
+    filename: 'Kev-0.8B-Q8_0.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '812MB',
+  },
+  JEVLING_0_8B: {
+    name: 'Jevling 0.8B v1 (Q8_0, F16 embeddings)',
+    repo: 'BricksDisplay/jevling-0.8b-v1-GGUF',
+    filename: 'jevling-0.8b-v1-q8_0-embf16.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '1.05GB',
+  },
+  LEV: {
+    name: 'lev (Q4_K_M)',
+    repo: 'ggml-org/lev-GGUF',
+    filename: 'lev-Q4_K_M.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '3.01GB',
+  },
+  KEV_4B: {
+    name: 'Kev 4B (Q8_0)',
+    repo: 'ggml-org/Kev-4B-GGUF',
+    filename: 'Kev-4B-Q8_0.gguf',
+    mmproj: undefined,
+    decision: true,
+    size: '4.48GB',
   }
 }
 

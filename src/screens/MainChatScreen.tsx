@@ -1218,12 +1218,13 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         }
         if (!context || !vocoderReady) { setSpeakingMsgId(null); return }
         writeLog('TTS', 'formatting audio completion...')
-        const { prompt, grammar } = await context.getFormattedAudioCompletion(null, text)
-        const guideTokens = await context.getAudioCompletionGuideTokens(text)
+        const { prompt, grammar, embedding } = await context.getFormattedAudioCompletion({
+          prompt: text,
+        })
         writeLog('TTS', 'generating audio...')
         const result = await context.completion({
-          prompt, grammar, guide_tokens: guideTokens,
-          n_predict: 4096, temperature: 0.7, stop: ['<|im_end|>'],
+          prompt, grammar, embedding,
+          n_predict: 4096, temperature: 0.7, stop: ['<|im_end|>', '<|SPEECH_GENERATION_END|>'],
         })
         if (result.audio_tokens?.length > 0) {
           writeLog('TTS', `decoding ${result.audio_tokens.length} tokens...`)

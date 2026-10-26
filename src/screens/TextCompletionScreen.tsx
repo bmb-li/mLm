@@ -14,7 +14,7 @@ import type { TokenData } from '../../modules/llama.rn/src'
 import ContextParamsModal from '../components/ContextParamsModal'
 import CompletionParamsModal from '../components/CompletionParamsModal'
 import { ParameterTextInput } from '../components/ParameterFormFields'
-import { ExampleModelSetup } from '../components/ExampleModelSetup'
+import { MinimalModelPicker } from '../components/MinimalModelPicker'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
@@ -322,22 +322,13 @@ export default function TextCompletionScreen({
   const renderContent = () => {
     if (!isModelReady) {
       return (
-        <ExampleModelSetup
+        <MinimalModelPicker
           description={t.examples.textCompletionDesc}
-          defaultModels={TEXT_COMPLETION_MODELS}
-          customModels={customModels || []}
-          availableModels={availableModels}
-          onInitializeCustomModel={(_model, modelPath) =>
-            handleInitModel(modelPath)
-          }
-          onInitializeModel={(_model, modelPath) => handleInitModel(modelPath)}
-          onReloadCustomModels={reloadCustomModels}
-          showCustomModelModal={showCustomModelModal}
-          onOpenCustomModelModal={() => setShowCustomModelModal(true)}
-          onCloseCustomModelModal={() => setShowCustomModelModal(false)}
+          models={availableModels}
+          onLoad={(_model, path) => handleInitModel(path)}
           isLoading={isLoading}
           initProgress={initProgress}
-          progressText={t.examples.initializing.replace('{progress}', String(initProgress))}
+          modelCategoryHint="模型 → 可用模型"
         />
       )
     }

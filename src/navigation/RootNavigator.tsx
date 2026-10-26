@@ -16,6 +16,7 @@ import AppGenSettingsScreen from '../screens/AppGenSettingsScreen'
 import BenchScreen from '../screens/BenchScreen'
 import StressTestScreen from '../screens/StressTestScreen'
 import MTPSpeculativeScreen from '../screens/MTPSpeculativeScreen'
+import DecisionScreen from '../screens/DecisionScreen'
 import type { RootStackParamList } from '../types/navigation'
 
 const Stack = createNativeStackNavigator<RootStackParamList>()
@@ -94,6 +95,11 @@ export default function RootNavigator() {
         name="MTPSpeculative"
         component={MTPSpeculativeScreen}
         options={{ title: 'MTP Speculative' }}
+      />
+      <Stack.Screen
+        name="Decision"
+        component={DecisionScreen}
+        options={{ title: 'Decision Models' }}
       />
       <Stack.Screen
         name="ServerLogs"

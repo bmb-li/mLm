@@ -89,6 +89,7 @@ export type TranslationStrings = {
     tabWavtokenizer: string
     tabMtp: string
     tabMtpAssistant: string
+    tabDecision: string
     selectMtpAssistant: string
     noMtpAssistant: string
     removeMtpAssistant: string
@@ -388,6 +389,9 @@ export type TranslationStrings = {
     // MTP Speculative
     mtpSpeculative: string
     mtpSpeculativeDesc: string
+    // Decision Models
+    decision: string
+    decisionDesc: string
     mtpModelsEmbedded: string
     targetDraftMtpModels: string
     addCustomMtpModel: string

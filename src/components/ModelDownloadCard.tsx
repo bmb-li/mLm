@@ -533,7 +533,16 @@ function ModelDownloadCard({
   initializeButtonText,
   isLocalFile = false,
 }: ModelDownloadCardProps) {
+  const { theme } = useTheme()
+  const styles = createStyles(theme)
   const files: ModelFile[] = [{ repo, filename }]
+
+  const openInBrowser = () => {
+    const url = `https://huggingface.co/${repo}/blob/main/${filename}`
+    Linking.openURL(url).catch(() => {
+      Alert.alert('Error', `Failed to open URL: ${url}`)
+    })
+  }
 
   return (
     <BaseModelDownloadCard
@@ -544,6 +553,15 @@ function ModelDownloadCard({
       downloadButtonText="Download"
       initializeButtonText={initializeButtonText}
       isLocalFile={isLocalFile}
+      renderBrowserButtons={() => (
+        <TouchableOpacity
+          style={styles.browserButton}
+          onPress={openInBrowser}
+          accessibilityLabel="Open in browser"
+        >
+          <Text style={styles.browserButtonText}>🌐</Text>
+        </TouchableOpacity>
+      )}
     />
   )
 }
