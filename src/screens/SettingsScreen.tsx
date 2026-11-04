@@ -7,6 +7,7 @@ import type { Language } from '../i18n/types'
 import AppHeader from '../components/AppHeader'
 import SettingsSection from '../components/SettingsSection'
 import { BuildInfo, getBackendDevicesInfo } from '../../modules/llama.rn/src'
+import { LLAMA_RN_VERSION } from '../utils/backendVersion'
 import { loadSearchEngine, saveSearchEngine, loadTavilyApiKey, saveTavilyApiKey } from '../features/websearch/utils/searchStorage'
 import { getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
 import type { SearchEngine } from '../features/websearch/types'
@@ -370,7 +371,7 @@ export default function SettingsScreen({ navigation }: { navigation: any }) {
                   {t.settings.version}
                 </Text>
                 <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
-                  {`mLm 0.5.4 (llama.rn v0.13.0-rc.8 b${BuildInfo.number})`}
+                  {`mLm 0.5.4 (llama.rn v${LLAMA_RN_VERSION} b${BuildInfo.number})`}
                 </Text>
               </View>
             </View>

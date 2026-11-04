@@ -30,11 +30,15 @@ export function useParameterModal<T>({
   const handleSave = async (
     onSave?: (params: T) => void,
     onClose?: () => void,
+    transform?: (params: T) => T,
   ) => {
     try {
       setIsLoading(true)
-      await saveParams(params)
-      onSave?.(params)
+      // `transform` normalises the edited values once, so what is persisted and
+      // what the caller receives are identical (empty numeric fields included).
+      const toSave = transform ? transform(params) : params
+      await saveParams(toSave)
+      onSave?.(toSave)
       onClose?.()
     } catch (error: any) {
       Alert.alert('Error', `Failed to save parameters: ${error.message}`)

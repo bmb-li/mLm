@@ -120,18 +120,36 @@ llama.rn is vendored at `modules/llama.rn/`. When updating prebuilt libraries:
 5. Clear `.cxx` cache: `rm -rf modules/llama.rn/android/.cxx`
 6. Rebuild
 
-To update from a local clone at `../llama.rn/`:
+To update from a local clone at `../llama.rn/` (since rc.4 the llama.cpp tree lives
+in `vendor/`, so `cpp/` alone is not enough):
 ```bash
-rsync -a --delete ../llama.rn/cpp/ modules/llama.rn/cpp/
-rsync -a --delete ../llama.rn/src/ modules/llama.rn/src/
+rsync -a --delete ../llama.rn/cpp/     modules/llama.rn/cpp/
+rsync -a --delete ../llama.rn/vendor/  modules/llama.rn/vendor/
+rsync -a --delete ../llama.rn/cmake/   modules/llama.rn/cmake/
+rsync -a --delete ../llama.rn/src/     modules/llama.rn/src/
+rsync -a --delete ../llama.rn/scripts/ modules/llama.rn/scripts/
+cp ../llama.rn/android/build.gradle        modules/llama.rn/android/build.gradle
+cp ../llama.rn/package.json                modules/llama.rn/package.json
+rsync -a --delete ../llama.rn/android/src/main/java/ modules/llama.rn/android/src/main/java/
+cp ../llama.rn/android/src/main/CMakeLists.txt    modules/llama.rn/android/src/main/
+cp ../llama.rn/android/src/main/RNLlamaJSI.cpp    modules/llama.rn/android/src/main/
 ```
+
+**⚠️ 升级后必须同步"后端版本号"显示**：设置页显示的是 `mLm <app版本> (llama.rn v<后端版本> b<build>)`。
+- 后端版本统一在 **`src/utils/backendVersion.ts`** 的 `LLAMA_RN_VERSION` 常量里维护
+- 每次升级 llama.rn 都要把该常量改成新版本（如 `0.13.0-rc.9`），并与 `modules/llama.rn/package.json` 的 `version` 保持一致
+- build 号由 `BuildInfo.number` 自动读取（来自 `modules/llama.rn/src/version.ts`），无需手改
+- 自检：`grep LLAMA_RN_VERSION src/utils/backendVersion.ts` 与 `grep '"version"' modules/llama.rn/package.json` 必须一致
 
 ## Version Info Locations
 
-Version must be updated in **3 places**:
-- `package.json` — `"version": "0.0.2"`
+App version must be updated in **3 places**:
+- `package.json` — `"version"`
 - `android/app/build.gradle` — `versionCode`, `versionName`
-- `src/screens/SettingsScreen.tsx` — hardcoded display string
+- `src/screens/SettingsScreen.tsx` — the `mLm <version>` part of the display string
+
+Backend (llama.rn) version has its own single source:
+- `src/utils/backendVersion.ts` — `LLAMA_RN_VERSION` (keep equal to `modules/llama.rn/package.json`)
 
 ## TypeScript / JavaScript
 

@@ -47,20 +47,21 @@ export default function CompletionParamsModal({
   }, [loadParamsAsync, visible])
 
   const handleTextInput = (text: string, paramKey: keyof CompletionParams) => {
+    if (paramKey === 'n_predict' || paramKey === 'thinking_budget_tokens') {
+      // Integer fields accept digits only; an empty field means "not limited"
+      // (stored as undefined, so llama.rn applies no cap) — users never have to
+      // type -1.
+      const digits = text.replace(/[^\d]/g, '')
+      updateParam(paramKey, digits ? parseInt(digits, 10) : undefined)
+      return
+    }
+
     if (text === '') {
       updateParam(paramKey, undefined)
-    } else {
-      const parsedInt = parseInt(text, 10)
-      const parsedFloat = parseFloat(text)
-
-      // For integer fields
-      if (paramKey === 'n_predict' || paramKey === 'thinking_budget_tokens') {
-        updateParam(paramKey, Number.isNaN(parsedInt) ? text : parsedInt)
-      } else {
-        // For float fields (temperature, top_p)
-        updateParam(paramKey, Number.isNaN(parsedFloat) ? text : parsedFloat)
-      }
+      return
     }
+    const parsedFloat = parseFloat(text)
+    updateParam(paramKey, Number.isNaN(parsedFloat) ? text : parsedFloat)
   }
 
   const validateIntegerParam = (
@@ -93,7 +94,8 @@ export default function CompletionParamsModal({
 
   const validateParams = (): { isValid: boolean; errors: string[] } => {
     const validations = [
-      validateIntegerParam(params.n_predict, -1, 4096, t.params.maxTokens),
+      // -1 means unlimited; otherwise allow any practical value (no 4096 cap)
+      validateIntegerParam(params.n_predict, -1, 999999, t.params.maxTokens),
       validateIntegerParam(params.thinking_budget_tokens, 0, 999999, t.params.thinkingBudget),
       validateNumberParam(params.temperature, 0.0, 2.0, t.params.temperature),
       validateNumberParam(params.top_p, 0.0, 1.0, t.params.topP),
@@ -160,8 +162,21 @@ export default function CompletionParamsModal({
       return
     }
 
-    const convertedParams = convertStringParamsToNumbers(params)
-    handleSave((_params) => onSave(convertedParams), onClose)
+    handleSave((saved) => onSave(saved), onClose, normalizeParams)
+  }
+
+  // `undefined` cannot survive JSON serialization, so "no limit" is stored as
+  // the llama.cpp sentinel -1 and rendered back as an empty field.
+  const normalizeParams = (input: CompletionParams): CompletionParams => {
+    const converted = convertStringParamsToNumbers(input) as CompletionParams
+    if (
+      converted.n_predict === undefined ||
+      converted.n_predict === null ||
+      (typeof converted.n_predict === 'number' && converted.n_predict <= 0)
+    ) {
+      converted.n_predict = -1
+    }
+    return converted
   }
 
   return (
@@ -178,10 +193,16 @@ export default function CompletionParamsModal({
       <ParameterTextInput
         label={t.params.maxTokens}
         description={t.params.maxTokensDesc}
-        value={params.n_predict?.toString()}
+        value={
+          params.n_predict === undefined ||
+          params.n_predict === null ||
+          params.n_predict === -1
+            ? ''
+            : String(params.n_predict)
+        }
         onChangeText={(text) => handleTextInput(text, 'n_predict')}
         keyboardType="numeric"
-        placeholder="512"
+        placeholder={t.params.maxTokensUnlimited}
       />
 
       {/* Temperature */}

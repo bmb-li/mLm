@@ -43,9 +43,18 @@ echo "==> load vhci modules"
 sudo modprobe vhci-hcd usbip-core usbip-host 2>/dev/null || true
 
 # The devices created by vhci_hcd are owned by root and udev rules do not apply
-# to them, so adb cannot open them without an explicit chmod.
-sleep 2
-sudo chmod 666 /dev/bus/usb/*/* 2>/dev/null || true
+# to them, so adb cannot open them without an explicit chmod. The node appears
+# asynchronously after the attach, so wait for it before granting access.
+for _ in $(seq 1 20); do
+  shopt -s nullglob
+  nodes=(/dev/bus/usb/*/*)
+  shopt -u nullglob
+  if [ ${#nodes[@]} -gt 0 ]; then
+    sudo chmod 666 "${nodes[@]}" 2>/dev/null || true
+    break
+  fi
+  sleep 1
+done
 
 echo "==> restart adb"
 adb kill-server >/dev/null 2>&1 || true

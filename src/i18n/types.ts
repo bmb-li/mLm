@@ -221,6 +221,7 @@ export type TranslationStrings = {
     contextWarning: string
     maxTokens: string
     maxTokensDesc: string
+    maxTokensUnlimited: string
     temperature: string
     temperatureDesc: string
     topP: string
