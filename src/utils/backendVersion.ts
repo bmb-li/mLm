@@ -5,4 +5,4 @@
  * backend is upgraded — the Settings screen reads it, and the build number is
  * taken from llama.rn's own BuildInfo.
  */
-export const LLAMA_RN_VERSION = '0.13.0-rc.9'
+export const LLAMA_RN_VERSION = '0.13.0-rc.11'

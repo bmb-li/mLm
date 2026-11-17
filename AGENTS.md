@@ -278,7 +278,10 @@ if (callbacks.onComplete) {
 |---|---|---|
 | rc.1 / rc.2 / rc.3 | 无 | 否（可复用）|
 | rc.4 ~ rc.7 | `mmap(fd, size)` 的 size `uint32`→`uint64` | **是** |
-| **rc.8+** | `start()` 新增 `power_mode` 参数（主机侧 6 参调用）| **是** |
+| rc.8 | `start()` 新增 `power_mode` 参数（主机侧 6 参调用）| **是** |
+| rc.9 | `start()` 新增 `vtcm_size`（`n_hmx` 之后、`max_vmem` 之前）| **是** |
+| rc.10 | 无 | 否（可复用 rc.9 的 skel）|
+| rc.11 | 无（llama.cpp b12292）| 否（可复用 rc.9 的 skel）|
 
 **⚠️ 升级 llama.rn 后必须重新编译 skel**：skel 固件与主机后端 IDL 强耦合，每次 llama.cpp sync 都可能改 IDL。若 HTP 卡 80%，先 `git diff <旧tag> <新tag> -- vendor/llama.cpp/ggml/src/ggml-hexagon/htp/htp_iface.idl`，有变更就必须重建 skel。
 
