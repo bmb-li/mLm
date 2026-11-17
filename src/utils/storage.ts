@@ -8,8 +8,23 @@ import type {
 export type ContextParams = Omit<LlamaContextParams, 'model'> & { image_max_tokens?: number }
 export type CompletionParams = Omit<LlamaCompletionParams, 'prompt'>
 
+/** A cloned voice: reference audio (cloned on use) or a saved speaker file. */
+export interface TTSCustomVoice {
+  id: string
+  name: string
+  kind: 'audio' | 'file'
+  audioPath?: string
+  refText?: string
+  filePath?: string
+}
+
 export interface TTSParams {
+  /** Builtin voice name of the loaded codec (rc.10), a TTSCustomVoice id, or null for the default. */
   speakerConfig: any | null
+  /** How to speak, for models with canTakeInstruct (Qwen3-TTS 1.7B, CosyVoice). */
+  instruct?: string | null
+  /** Voices the user cloned from reference audio or saved to a speaker file. */
+  customVoices?: TTSCustomVoice[]
 }
 
 export interface CustomModel {
@@ -76,6 +91,8 @@ export const DEFAULT_COMPLETION_PARAMS: CompletionParams = {
 
 export const DEFAULT_TTS_PARAMS: TTSParams = {
   speakerConfig: null,
+  instruct: null,
+  customVoices: [],
 }
 
 export const DEFAULT_MCP_CONFIG: MCPConfig = {

@@ -91,17 +91,93 @@ export const MODELS = {
     size: '808MB (model) + 1.37GB (mmproj)',
   },
   OUTE_TTS_0_3: {
-    name: 'OuteTTS 0.3 500M (Q4_K_M) + WavTokenizer (FP16)',
-    repo: 'OuteAI/OuteTTS-0.3-500M-GGUF',
+    name: 'OuteTTS 0.3 500M (Q4_K_M) · 仅英文 + codec-f16',
+    repo: 'BricksDisplay/OuteTTS-0.3-500M-GGUF',
     filename: 'OuteTTS-0.3-500M-Q4_K_M.gguf',
     mmproj: undefined,
-    size: '454MB (model) + 170MB (vocoder)',
-    // Must be the codec.cpp GGUF: the legacy ggml-org/WavTokenizer export is
-    // not loadable by the codec.cpp vocoder backend used since llama.rn 0.13.
+    size: '385MB (model) + 170MB (codec)',
+    // rc.10: the codec GGUF must ship with the backbone's tokenizer (builtin
+    // voices baked in). Older standalone vocoders are not loadable.
     vocoder: {
-      repo: 'BricksDisplay/codec.cpp-gguf',
-      filename: 'wavtokenizer-large-speech-75tokens.gguf',
-      size: '170MB',
+      repo: 'BricksDisplay/OuteTTS-0.3-500M-GGUF',
+      filename: 'codec-f16.gguf',
+      size: '178MB',
+    },
+  },
+  // ---- Additional TTS families (llama.rn rc.10 codec.cpp backend) ----
+  // Each backbone ships with a tokenizer-matched codec GGUF; sizes are the
+  // model + codec pair.
+  OUTE_TTS_1_0: {
+    name: 'OuteTTS 1.0 0.6B (Q4_K_M) · 英文为主 + DAC',
+    repo: 'BricksDisplay/OuteTTS-1.0-0.6B-GGUF',
+    filename: 'OuteTTS-1.0-0.6B-Q4_K_M.gguf',
+    mmproj: undefined,
+    size: '383MB + 141MB',
+    vocoder: {
+      repo: 'BricksDisplay/OuteTTS-1.0-0.6B-GGUF',
+      filename: 'codec-f16.gguf',
+      size: '141MB',
+    },
+  },
+  QWEN3_TTS_0_6B: {
+    name: 'Qwen3-TTS 0.6B (Q4_K_M) · 中英 · 约 1.6GB',
+    repo: 'BricksDisplay/Qwen3-TTS-12Hz-0.6B-GGUF',
+    filename: 'qwen3-tts-0.6b-q4_k_m.gguf',
+    mmproj: undefined,
+    // The codec/codec_lm GGUF dominates: even the smallest quant is ~1.2GB.
+    size: '378MB + 1226MB',
+    vocoder: {
+      repo: 'BricksDisplay/Qwen3-TTS-12Hz-0.6B-GGUF',
+      filename: 'codec-q4_k_m.gguf',
+      size: '1226MB',
+    },
+  },
+  CHATTERBOX_MULTILINGUAL: {
+    name: 'Chatterbox Multilingual (Q4_K_M) · 中英多语',
+    repo: 'BricksDisplay/Chatterbox-Multilingual-TTS-GGUF',
+    filename: 'chatterbox-mtl-q4_k_m.gguf',
+    mmproj: undefined,
+    size: '290MB + 183MB',
+    vocoder: {
+      repo: 'BricksDisplay/Chatterbox-Multilingual-TTS-GGUF',
+      filename: 'codec-q4_k_m.gguf',
+      size: '178MB',
+    },
+  },
+  CHATTERBOX_TURBO: {
+    name: 'Chatterbox Turbo (Q4_K_M) · 英文',
+    repo: 'BricksDisplay/Chatterbox-Turbo-GGUF',
+    filename: 'chatterbox-turbo-t3-q4_k_m.gguf',
+    mmproj: undefined,
+    size: '259MB + 217MB',
+    vocoder: {
+      repo: 'BricksDisplay/Chatterbox-Turbo-GGUF',
+      filename: 'chatterbox-turbo-codec-q4_k_m.gguf',
+      size: '217MB',
+    },
+  },
+  BREEZYVOICE: {
+    name: 'BreezyVoice (Q4_K_M) · 中文',
+    repo: 'BricksDisplay/BreezyVoice-GGUF',
+    filename: 'breezyvoice-lm-q4_k_m.gguf',
+    mmproj: undefined,
+    size: '161MB + 287MB',
+    vocoder: {
+      repo: 'BricksDisplay/BreezyVoice-GGUF',
+      filename: 'breezyvoice-codec-q4_k_m.gguf',
+      size: '287MB',
+    },
+  },
+  SOPRANO_1_1: {
+    name: 'Soprano 1.1 80M (Q8_0) · 最小体积',
+    repo: 'BricksDisplay/Soprano-1.1-80M-GGUF',
+    filename: 'Soprano-1.1-80M-soprano-tok.Q8_0.gguf',
+    mmproj: undefined,
+    size: '81MB + 116MB',
+    vocoder: {
+      repo: 'BricksDisplay/Soprano-1.1-80M-GGUF',
+      filename: 'codec-F32.gguf',
+      size: '121MB',
     },
   },
   EMBEDDINGGEMMA_300M: {

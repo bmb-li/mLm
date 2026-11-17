@@ -14,11 +14,23 @@ import { useModelContext } from '../contexts/ModelContext'
 import { loadContextParams, saveContextParams, saveCustomModel, deleteCustomModel, updateCustomModel, type ContextParams, type CustomModel } from '../utils/storage'
 import { useStoredCustomModels } from '../hooks/useStoredSetting'
 import { ModelDownloader } from '../services/ModelDownloader'
-import { getModelDownloadUrl } from '../utils/constants'
+import { MODELS, getModelDownloadUrl } from '../utils/constants'
 
 const downloader = new ModelDownloader()
 
 // Typed decision models: answer choice/score/yes-no in one forward pass.
+// Built-in TTS backbones (each ships with a tokenizer-matched codec GGUF).
+const TTS_MODELS = Object.entries(MODELS)
+  .filter(([, m]) => Boolean((m as any).vocoder))
+  .map(([key, m]) => ({
+    key,
+    name: m.name,
+    size: m.size,
+    repo: m.repo,
+    filename: m.filename,
+    vocoder: (m as any).vocoder as { repo: string; filename: string; size?: string },
+  }))
+
 const DECISION_BUILTIN = [
   { id: 'Julia-1', name: 'Julia-1 (Q8_0)', repo: 'ggml-org/Julia-1-GGUF', filename: 'Julia-1-Q8_0.gguf', size: '168MB' },
   { id: 'Laya', name: 'Laya (Q8_0)', repo: 'ggml-org/Laya-GGUF', filename: 'Laya-Q8_0.gguf', size: '449MB' },
@@ -368,55 +380,61 @@ export default function ModelScreen() {
   const [ttsDownloading, setTtsDownloading] = useState(false)
   const [ttsDownloadProgress, setTtsDownloadProgress] = useState(0)
   const [ttsDownloadStatus, setTtsDownloadStatus] = useState('')
-  const ttsModelRepo = 'OuteAI/OuteTTS-0.3-500M-GGUF'
-  const ttsModelFile = 'OuteTTS-0.3-500M-Q4_K_M.gguf'
-  // Must match the codec.cpp vocoder backend used by llama.rn 0.13+; the
-  // legacy ggml-org/WavTokenizer export cannot be loaded by it.
-  const ttsVocoderRepo = 'BricksDisplay/codec.cpp-gguf'
-  const ttsVocoderFile = 'wavtokenizer-large-speech-75tokens.gguf'
-
-  const handleTtsDownloadLocal = useCallback(async () => {
-    try {
-      setTtsDownloading(true)
-      setTtsDownloadProgress(0)
-      setTtsDownloadStatus(t.models.ttsModel + '...')
-      const ttsPath = await downloader.downloadModel(ttsModelRepo, ttsModelFile, (p) => {
-        setTtsDownloadProgress(Math.round(p.percentage / 2))
-        setTtsDownloadStatus(`${t.models.ttsModel}: ${p.percentage}%`)
-      })
-      setTtsDownloadStatus(t.models.selectVocoder + '...')
-      const vocoderPath = await downloader.downloadModel(ttsVocoderRepo, ttsVocoderFile, (p) => {
-        setTtsDownloadProgress(50 + Math.round(p.percentage / 2))
-        setTtsDownloadStatus(`Vocoder: ${p.percentage}%`)
-      })
-      setTtsDownloadProgress(100)
-      setTtsDownloadStatus(t.common.success)
-      const newModel: CustomModel = {
-        id: 'OuteTTS-0.3-500M',
-        repo: ttsModelRepo,
-        filename: ttsModelFile,
-        quantization: 'Q4_K_M',
-        addedAt: Date.now(),
-        localPath: ttsPath,
-        vocoderFilename: ttsVocoderFile,
-        vocoderLocalPath: vocoderPath,
+  const handleTtsDownloadLocal = useCallback(
+    async (def: { name: string; repo: string; filename: string; vocoder: { repo: string; filename: string } }) => {
+      try {
+        setTtsDownloading(true)
+        setTtsDownloadProgress(0)
+        setTtsDownloadStatus(`${def.name}...`)
+        const ttsPath = await downloader.downloadModel(def.repo, def.filename, (p) => {
+          setTtsDownloadProgress(Math.round(p.percentage / 2))
+          setTtsDownloadStatus(`${def.name}: ${p.percentage}%`)
+        })
+        setTtsDownloadStatus(`${t.models.selectVocoder}...`)
+        const vocoderPath = await downloader.downloadModel(
+          def.vocoder.repo,
+          def.vocoder.filename,
+          (p) => {
+            setTtsDownloadProgress(50 + Math.round(p.percentage / 2))
+            setTtsDownloadStatus(`Codec: ${p.percentage}%`)
+          },
+        )
+        setTtsDownloadProgress(100)
+        setTtsDownloadStatus(t.common.success)
+        const newModel: CustomModel = {
+          id: def.filename.replace(/\.gguf$/i, ''),
+          repo: def.repo,
+          filename: def.filename,
+          quantization: 'Unknown',
+          addedAt: Date.now(),
+          localPath: ttsPath,
+          vocoderFilename: def.vocoder.filename,
+          vocoderLocalPath: vocoderPath,
+        }
+        await saveCustomModel(newModel)
+        await reloadCustomModels()
+        Alert.alert(t.common.success, `${def.name} downloaded!`)
+      } catch (e: any) {
+        Alert.alert(t.common.error, e?.message ?? String(e))
+      } finally {
+        setTtsDownloading(false)
+        setTtsDownloadProgress(0)
+        setTtsDownloadStatus('')
       }
-      await saveCustomModel(newModel)
-      await reloadCustomModels()
-      Alert.alert(t.common.success, 'TTS model downloaded successfully!')
-    } catch (e: any) {
-      Alert.alert(t.common.error, e.message)
-    } finally {
-      setTtsDownloading(false)
-      setTtsDownloadProgress(0)
-      setTtsDownloadStatus('')
-    }
-  }, [t, reloadCustomModels])
+    },
+    [t, reloadCustomModels],
+  )
 
-  const handleTtsDownloadBrowser = useCallback(() => {
-    Linking.openURL(getModelDownloadUrl(ttsModelRepo, ttsModelFile))
-    setTimeout(() => Linking.openURL(getModelDownloadUrl(ttsVocoderRepo, ttsVocoderFile)), 800)
-  }, [])
+  const handleTtsDownloadBrowser = useCallback(
+    (def: { repo: string; filename: string; vocoder: { repo: string; filename: string } }) => {
+      Linking.openURL(getModelDownloadUrl(def.repo, def.filename))
+      setTimeout(
+        () => Linking.openURL(getModelDownloadUrl(def.vocoder.repo, def.vocoder.filename)),
+        800,
+      )
+    },
+    [],
+  )
 
   // MTP download states
   const [mtpDownloading, setMtpDownloading] = useState(false)
@@ -772,20 +790,28 @@ export default function ModelScreen() {
             <Text style={s.importBtnTxt}>{(t.models as any).goHuggingFace || '🌐 HuggingFace'}</Text>
           </TouchableOpacity>
         </View>
-        {activeTab === 'tts' && !ttsDownloading && (
-          <View style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
-            <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>📥 OuteTTS 0.3 500M + WavTokenizer (codec.cpp)</Text>
-            <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>454MB + 170MB</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <TouchableOpacity style={[s.btn, { borderColor: c.primary, flex: 1 }]} onPress={handleTtsDownloadLocal}>
-                <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ {t.models.ttsModel}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]} onPress={handleTtsDownloadBrowser}>
-                <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
-              </TouchableOpacity>
+        {activeTab === 'tts' && !ttsDownloading &&
+          TTS_MODELS.map(def => (
+            <View key={def.filename} style={[s.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+              <Text style={[s.name, { color: c.text, marginBottom: 4 }]}>{`📥 ${def.name}`}</Text>
+              <Text style={{ color: c.textSecondary, fontSize: 12, marginBottom: 10 }}>{def.size}</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity
+                  style={[s.btn, { borderColor: c.primary, flex: 1 }]}
+                  onPress={() => handleTtsDownloadLocal(def)}
+                  disabled={ttsDownloading}
+                >
+                  <Text style={[s.btnTxt, { color: c.primary, textAlign: 'center' }]}>⬇ {t.models.ttsModel}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.btn, { borderColor: c.textSecondary, flex: 1 }]}
+                  onPress={() => handleTtsDownloadBrowser(def)}
+                >
+                  <Text style={[s.btnTxt, { color: c.textSecondary, textAlign: 'center' }]}>🌐 浏览器下载</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        )}
+          ))}
         {activeTab === 'tts' && ttsDownloading && (
           <View style={[s.card, { backgroundColor: c.surface, borderColor: c.primary }]}>
             <Text style={{ color: c.text, fontSize: 14, marginBottom: 6 }}>{ttsDownloadStatus}</Text>

@@ -222,6 +222,46 @@ export type TranslationStrings = {
     maxTokens: string
     maxTokensDesc: string
     maxTokensUnlimited: string
+    ttsTitle: string
+    ttsDesc: string
+    voiceName: string
+    voiceNameDesc: string
+    voiceNamePlaceholder: string
+    voiceSection: string
+    voiceSectionDesc: string
+    voiceDefault: string
+    voiceIsDefault: string
+    voiceNeedModel: string
+    voiceNoBuiltin: string
+    voiceNeedsVoice: string
+    voiceManual: string
+    voiceManualDesc: string
+    voiceCustomSection: string
+    voiceCustomDesc: string
+    voicePickWav: string
+    voiceCreateClone: string
+    voiceCloning: string
+    voiceSpeakerFile: string
+    voiceRefAudio: string
+    voiceRefAudioNone: string
+    voiceRefTextPlaceholder: string
+    voiceInstruct: string
+    voiceInstructDesc: string
+    voiceInstructPlaceholder: string
+    voiceDelete: string
+    voiceWavOnly: string
+    voiceWavOnlyDesc: string
+    voiceGgufOnly: string
+    voiceGgufOnlyDesc: string
+    voiceEmptyAudio: string
+    voiceTooShort: string
+    voiceCloneFailed: string
+    voiceCloneUnsupported: string
+    voiceEnglishOnly: string
+    voiceEnglishBlocked: string
+    voiceEnglishBlockedDesc: string
+    voiceNoSuchVoice: string
+    voiceNoSuchVoiceDesc: string
     temperature: string
     temperatureDesc: string
     topP: string

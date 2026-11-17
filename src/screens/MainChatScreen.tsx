@@ -6,11 +6,12 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Clipboard from '@react-native-clipboard/clipboard'
 import { useTheme } from '../contexts/ThemeContext'
 import { useI18n } from '../contexts/I18nContext'
+import { resolveTTSVoice, hasEnglishWords } from '../utils/ttsVoice'
 import AppHeader from '../components/AppHeader'
 import ModelSelectorBar from '../components/ModelSelectorBar'
 import CompletionParamsModal from '../components/CompletionParamsModal'
 import { useModelContext } from '../contexts/ModelContext'
-import { useStoredCompletionParams } from '../hooks/useStoredSetting'
+import { useStoredCompletionParams, useStoredTTSParams } from '../hooks/useStoredSetting'
 import { useTtsEngine, useTtsAutoSpeak, useTtsSpeed, useTtsVoice, useStoredCustomModels } from '../hooks/useStoredSetting'
 import Speech from '@mhpdev/react-native-speech'
 import { searchWebViaApi, buildSearchSystemPrompt, getSearchEngineIcon } from '../features/websearch/services/SearchOrchestrator'
@@ -226,6 +227,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
   const { context, isModelReady, activeModelName, vocoderReady, loadModel } = useModelContext()
   const { value: customModels } = useStoredCustomModels()
   const { value: completionParams, setValue: setCompletionParams } = useStoredCompletionParams()
+  const { value: ttsParams } = useStoredTTSParams()
 
   const [showAttachMenu, setShowAttachMenu] = useState(false)
   const [pendingMedia, setPendingMedia] = useState<{ type: 'image' | 'audio'; data: string; mimeType: string } | null>(null)
@@ -1204,6 +1206,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
     ttsSpeakingRef.current = true
 
     if (ttsEngine === 'model') {
+      let releaseVoice: (() => Promise<void>) | null = null
       try {
         writeLog('TTS', `model speak: id=${msgId.slice(0,8)}, len=${text.length}`)
         // Auto-load TTS model if vocoder not ready
@@ -1217,22 +1220,67 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
           await loadModel(ttsModel.localPath || '', ttsModel.id, undefined, (ttsModel as any).vocoderLocalPath)
         }
         if (!context || !vocoderReady) { setSpeakingMsgId(null); return }
+
+        // Same voice / instruct / language rules as the TTS test screen: the
+        // parameters are shared, so a voice cloned there also speaks here.
+        const caps = await context.getTTSCapabilities().catch(() => null)
+        const englishOnly =
+          caps?.promptKind === 'outetts_v0_3' || caps?.promptKind === 'outetts_legacy'
+        if (englishOnly && !hasEnglishWords(text)) {
+          Alert.alert(t.params.voiceEnglishBlocked, t.params.voiceEnglishBlockedDesc)
+          setSpeakingMsgId(null)
+          return
+        }
+
+        const voice = await resolveTTSVoice(context, ttsParams)
+        releaseVoice = voice.release
+        const speaker = voice.speaker
+        const instruct =
+          caps?.canTakeInstruct && ttsParams?.instruct?.trim()
+            ? ttsParams.instruct.trim()
+            : undefined
+
         writeLog('TTS', 'formatting audio completion...')
-        const { prompt, grammar, embedding } = await context.getFormattedAudioCompletion({
+        // rc.10: run the returned request (completionParams) as-is.
+        const request = await context.getFormattedAudioCompletion({
           prompt: text,
+          ...(speaker ? { speaker } : {}),
+          ...(instruct ? { instruct } : {}),
         })
         writeLog('TTS', 'generating audio...')
         const result = await context.completion({
-          prompt, grammar, embedding,
+          ...(request.completionParams ?? {}),
+          prompt: request.prompt,
+          grammar: request.grammar,
+          embedding: request.embedding,
+          ...(speaker ? { speaker } : {}),
           n_predict: 4096, temperature: 0.7, stop: ['<|im_end|>', '<|SPEECH_GENERATION_END|>'],
         })
+        const latents = (result as any).audio_latents as number[] | undefined
+        if (latents?.length > 0) {
+          writeLog('TTS', `decoding ${latents.length} latents...`)
+          const decoded = await context.decodeAudioLatents(latents)
+          const float32 = new Float32Array(decoded)
+          const rate = (await context.getAudioSampleRate()) || 24000
+          const { AudioContext } = require('react-native-audio-api')
+          const actx = new AudioContext({ sampleRate: rate })
+          const buf = actx.createBuffer(1, float32.length, rate)
+          buf.copyToChannel(float32, 0)
+          const src = actx.createBufferSource()
+          src.buffer = buf; src.connect(actx.destination)
+          src.onended = () => { actx.close(); setSpeakingMsgId(null) }
+          src.start()
+          writeLog('TTS', 'playing...')
+          return
+        }
         if (result.audio_tokens?.length > 0) {
           writeLog('TTS', `decoding ${result.audio_tokens.length} tokens...`)
           const decoded = await context.decodeAudioTokens(result.audio_tokens)
           const float32 = new Float32Array(decoded)
+          const rate = (await context.getAudioSampleRate()) || 24000
           const { AudioContext } = require('react-native-audio-api')
-          const actx = new AudioContext({ sampleRate: 24000 })
-          const buf = actx.createBuffer(1, float32.length, 24000)
+          const actx = new AudioContext({ sampleRate: rate })
+          const buf = actx.createBuffer(1, float32.length, rate)
           buf.copyToChannel(float32, 0)
           const src = actx.createBufferSource()
           src.buffer = buf; src.connect(actx.destination)
@@ -1247,6 +1295,8 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
         writeLog('TTS', `model error: ${e?.message || e}`)
         Alert.alert('模型 TTS 错误', e?.message || String(e))
         setSpeakingMsgId(null)
+      } finally {
+        if (releaseVoice) await releaseVoice().catch(() => {})
       }
       return
     }
@@ -1266,7 +1316,7 @@ export default function MainChatScreen({ navigation }: { navigation: any }) {
       writeLog('TTS', `sys error: ${e?.message || e}`)
       setSpeakingMsgId(null)
     }
-  }, [ttsSpeed, writeLog, ttsEngine, vocoderReady, customModels, loadModel, context])
+  }, [ttsSpeed, writeLog, ttsEngine, vocoderReady, customModels, loadModel, context, ttsParams, t])
 
   const deleteMessage = useCallback((id: string) => {
     setMessages(prev => prev.filter(m => m.id !== id))

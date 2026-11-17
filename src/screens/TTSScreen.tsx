@@ -16,6 +16,7 @@ import CompletionParamsModal from '../components/CompletionParamsModal'
 import TTSParamsModal from '../components/TTSParamsModal'
 import { AudioPlayer } from '../components/AudioPlayer'
 import { MaskedProgress } from '../components/MaskedProgress'
+import { Waveform } from '../components/Waveform'
 import Icon from '@react-native-vector-icons/material-design-icons'
 import { createThemedStyles } from '../styles/commonStyles'
 import { useTheme } from '../contexts/ThemeContext'
@@ -32,6 +33,8 @@ import {
 } from '../utils/storage'
 import { createWavFile } from '../utils/audioUtils'
 import { initLlama } from '../../modules/llama.rn/src' // import 'llama.rn'
+import type { TTSCapabilities } from '../../modules/llama.rn/src'
+import { resolveTTSVoice, hasEnglishWords } from '../utils/ttsVoice'
 import {
   useStoredCompletionParams,
   useStoredContextParams,
@@ -50,6 +53,15 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
   const [isLoading, setIsLoading] = useState(false)
   const [isVocoderReady, setIsVocoderReady] = useState(false)
   const [vocoderHintText, setVocoderHintText] = useState('检测中…')
+  const [ttsCaps, setTtsCaps] = useState<TTSCapabilities | null>(null)
+  const [liveTokens, setLiveTokens] = useState(0)
+  const [liveStartedAt, setLiveStartedAt] = useState<number | null>(null)
+  const [genStats, setGenStats] = useState<{
+    genSec: number
+    audioSec: number | null
+    tokens: number
+    label: string
+  } | null>(null)
   const [generatedAudio, setGeneratedAudio] = useState<string | null>(null)
   const [audioData, setAudioData] = useState<Float32Array | null>(null)
   const [sampleRate, setSampleRate] = useState<number>(24000)
@@ -77,6 +89,11 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
       return p.includes('/tts/')
     }),
   [customModels])
+
+  // OuteTTS 0.2 / 0.3 only speak English (their frontend keeps a-z words).
+  const englishOnlyModel =
+    ttsCaps?.promptKind === 'outetts_v0_3' ||
+    ttsCaps?.promptKind === 'outetts_legacy'
 
   const handleSaveContextParams = (params: ContextParams) => {
     setContextParams(params)
@@ -174,6 +191,11 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
     ],
     setupActions: [
       {
+        key: 'tts-settings',
+        iconName: 'speaker',
+        onPress: () => setShowTTSParamsModal(true),
+      },
+      {
         key: 'context-settings',
         iconName: 'cog-outline',
         onPress: () => setShowContextParamsModal(true),
@@ -207,10 +229,12 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         // ggml-org/WavTokenizer file, which the 0.13+ backend cannot load.
         const rank = (f: string) => {
           const n = f.toLowerCase()
-          if (/speech-75tokens|wavtokenizer-large-speech/.test(n)) return 0
+          // rc.10 ships tokenizer-matched codec GGUFs named codec-*.gguf
+          if (/^codec[-_].*\.gguf$/.test(n)) return 0
           if (/(codec|dac|soprano|vocoder)/.test(n)) return 1
+          if (/speech-75tokens|wavtokenizer-large-speech/.test(n)) return 2
           if (/wavtokenizer-large-75-q5_1/.test(n)) return 8 // legacy, unusable
-          if (n.endsWith('.gguf')) return 2
+          if (n.endsWith('.gguf')) return 3
           return 9
         }
         const ranked = ggufs
@@ -290,8 +314,9 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
       // "ready" while generation throws "Vocoder is not enabled".
       let vocoderOk = false
       try {
-        // Let the codec follow the context's backend selection (n_gpu_layers /
-        // devices from the settings), so GPU/NPU acceleration applies here too.
+        // Init the codec first: getTTSCapabilities() only reports the codec's
+        // family / builtin voices once a vocoder is attached, so it must not be
+        // read before this point.
         vocoderOk = await llamaContext.initVocoder({
           path: resolvedVocoderPath,
           n_batch: 256,
@@ -309,12 +334,74 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         if (!vocoderOk) {
           vocoderOk = await llamaContext.isVocoderEnabled()
         }
+
+        if (vocoderOk) {
+          // Chatterbox T3 decodes a guidance pair (needs >= 2 parallel slots);
+          // otherwise the guidance has to be turned off when loading the codec.
+          const capsNow = await llamaContext
+            .getTTSCapabilities()
+            .catch(() => null as any)
+          const isChatterboxT3 =
+            capsNow?.family === 'chatterbox' &&
+            capsNow?.promptKind === 'chatterbox'
+          const nParallel = Number(params.n_parallel ?? 1)
+          if (isChatterboxT3 && nParallel < 2) {
+            console.log('[TTS] chatterbox guidance disabled (n_parallel < 2)')
+            await llamaContext.releaseVocoder().catch(() => {})
+            vocoderOk = await llamaContext.initVocoder({
+              path: resolvedVocoderPath,
+              n_batch: 256,
+              kv_overrides: ['codec.lm.chatterbox.sampling.cfg_weight=float:0'],
+            })
+          }
+          const capsFinal = await llamaContext
+            .getTTSCapabilities()
+            .catch(() => null as any)
+          setTtsCaps(capsFinal ?? capsNow ?? null)
+        }
       } catch (vocoderError) {
         console.log('Vocoder initialization error:', vocoderError)
         vocoderOk = false
       }
       setIsVocoderReady(vocoderOk)
       console.log('[TTS] initVocoder result:', vocoderOk, resolvedVocoderPath)
+
+      if (vocoderOk) {
+        try {
+          const caps = await llamaContext.getTTSCapabilities()
+          setTtsCaps(caps)
+          const voiceNames = (caps.builtinVoices || []).map(v => v.name)
+          console.log(
+            '[TTS] family:',
+            caps.family,
+            '| needsVoice:',
+            caps.needsVoice,
+            '| voices:',
+            JSON.stringify(voiceNames),
+          )
+          if (voiceNames.length > 0) {
+            setVocoderHintText(
+              `${resolvedVocoderPath.split('/').pop()} · 内置音色: ${voiceNames.join(', ')}`,
+            )
+          }
+          const chosenVoice =
+            typeof ttsParams?.speakerConfig === 'string'
+              ? ttsParams.speakerConfig.trim()
+              : ''
+          if (caps.needsVoice && !chosenVoice) {
+            Alert.alert(
+              '需要音色',
+              `${caps.family} 模型没有自带音色。请在「TTS 参数」里填写音色名称${
+                voiceNames.length > 0
+                  ? `（可选：${voiceNames.join(', ')}）`
+                  : '（该模型需要参考音频克隆音色）'
+              }。`,
+            )
+          }
+        } catch (e) {
+          console.log('[TTS] capabilities read failed:', e)
+        }
+      }
       if (!vocoderOk) {
         setVocoderHintText(
           `${resolvedVocoderPath.split('/').pop()} (加载失败：格式可能不兼容)`,
@@ -344,41 +431,118 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
       )
       return
     }
+    // OuteTTS 0.2 / 0.3 are English word-level models: their frontend keeps
+    // only a-z, so text without English letters fails natively with
+    // "no words in the input text". Block it here with an actionable hint.
+    if (englishOnlyModel && !hasEnglishWords(inputText)) {
+      Alert.alert(t.params.voiceEnglishBlocked, t.params.voiceEnglishBlockedDesc)
+      return
+    }
 
+    let speakerRelease: (() => Promise<void>) | null = null
     try {
       setIsLoading(true)
+      setGenStats(null)
+      setLiveTokens(0)
+      setLiveStartedAt(Date.now())
+
+      // Each synthesis starts at position 0: embedding-driven TTS prefills
+      // cannot safely reuse the previous generation's KV entries.
+      try {
+        await context.clearCache(false)
+      } catch (e) {
+        console.log('[TTS] clearCache failed:', e)
+      }
 
       const text = inputText.trim()
-      // Build formatted audio completion using the OuteTTS-compatible API.
-      // `speakerConfig` (when present) is a raw OuteTTS speaker JSON payload.
-      const { prompt: formattedPrompt, grammar, embedding } =
-        await context.getFormattedAudioCompletion({
-          prompt: text,
-          ...(ttsParams?.speakerConfig
-            ? { speaker: ttsParams.speakerConfig }
-            : {}),
-        })
+      // llama.rn 0.13.0-rc.10: getFormattedAudioCompletion returns the whole
+      // request (`completionParams`), including prompt/grammar/logit_bias, and
+      // `speaker` must be a builtin voice name or a LlamaSpeaker — passing a
+      // structured payload now throws.
+      const voice = await resolveTTSVoice(context, ttsParams)
+      speakerRelease = voice.release
+      const speakerValue = voice.speaker
+
+      // A name the codec does not know would fail natively with "no voice";
+      // report it with the list the user can pick from instead.
+      if (
+        typeof speakerValue === 'string' &&
+        (ttsCaps?.builtinVoices?.length ?? 0) > 0 &&
+        !ttsCaps!.builtinVoices.some(v => v.name === speakerValue)
+      ) {
+        throw new Error(
+          t.params.voiceNoSuchVoiceDesc.replace(
+            '{voices}',
+            ttsCaps!.builtinVoices.map(v => v.name).join(', '),
+          ),
+        )
+      }
+
+      const instruct =
+        ttsCaps?.canTakeInstruct && ttsParams?.instruct?.trim()
+          ? ttsParams.instruct.trim()
+          : undefined
+
+      const request = await context.getFormattedAudioCompletion({
+        prompt: text,
+        ...(speakerValue ? { speaker: speakerValue } : {}),
+        ...(instruct ? { instruct } : {}),
+      })
 
       const collectedTokens: number[] = []
       const params = completionParams || (await loadCompletionParams())
+      const genStart = Date.now()
+      const finishStats = (tokens: number, label: string, pcm?: Float32Array | null) =>
+        setGenStats({
+          genSec: (Date.now() - genStart) / 1000,
+          audioSec: pcm && pcm.length > 0 ? pcm.length / (sampleRate || 24000) : null,
+          tokens,
+          label,
+        })
 
       const result = await context.completion(
         {
-          prompt: formattedPrompt,
-          grammar,
-          embedding,
-          n_predict: params.n_predict || 4096,
-          temperature: params.temperature || 0.7,
-          top_p: params.top_p || 0.9,
+          ...(request.completionParams ?? {}),
+          prompt: request.prompt,
+          grammar: request.grammar,
+          embedding: request.embedding,
+          ...(speakerValue ? { speaker: speakerValue } : {}),
+          n_predict: params.n_predict ?? -1,
+          temperature: params.temperature ?? 0.7,
+          top_p: params.top_p ?? 0.9,
           stop: params.stop || ['<|im_end|>', '<|SPEECH_GENERATION_END|>'],
         },
         (data) => {
           // Collect tokens for potential audio processing
           if (data.token && typeof data.token === 'number') {
             collectedTokens.push(data.token)
+            setLiveTokens(c => c + 1)
           }
         },
       )
+
+      // Latent models (Soprano, BlueMagpie, Pocket-TTS) return audio_latents
+      // instead of codec tokens; decode them with decodeAudioLatents().
+      const latents = (result as any).audio_latents as number[] | undefined
+      if (latents && latents.length > 0) {
+        setGeneratedAudio(
+          `Generated ${latents.length} audio latents for: "${inputText.trim()}"`,
+        )
+        try {
+          const decodedAudio = await context.decodeAudioLatents(latents)
+          const audioFloat32 = new Float32Array(decodedAudio)
+          const rate = await context.getAudioSampleRate()
+          setAudioData(audioFloat32)
+          setSampleRate(rate || 24000)
+          finishStats((result as any).tokens_predicted ?? latents.length, 'steps', audioFloat32)
+          setGeneratedAudio(
+            `Generated audio data (${audioFloat32.length} samples) for: "${inputText.trim()}"`,
+          )
+        } catch (decodeError) {
+          console.log('Audio latent decoding error:', decodeError)
+        }
+        return
+      }
 
       // Check if we got audio tokens
       if (result.audio_tokens && result.audio_tokens.length > 0) {
@@ -399,7 +563,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
             // Convert ArrayBuffer to Float32Array for AudioPlayer
             const audioFloat32 = new Float32Array(decodedAudio)
             setAudioData(audioFloat32)
-            setSampleRate(24000) // OuteTTS default sample rate
+            setSampleRate((await context.getAudioSampleRate()) || 24000)
 
             setGeneratedAudio(
               `Generated audio data (${
@@ -429,9 +593,18 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         )
       }
     } catch (error: any) {
-      Alert.alert(t.examples.error, `Failed to generate speech: ${error.message}`)
+      const message: string = error?.message ?? String(error)
+      // Translate the native word-level model failure into an actionable hint.
+      const friendly = message.includes('no words in the input text')
+        ? `${t.params.voiceEnglishBlocked}: ${t.params.voiceEnglishOnly}`
+        : message.startsWith('TTS: no voice')
+        ? t.params.voiceNoSuchVoice
+        : message
+      Alert.alert(t.examples.error, `Failed to generate speech: ${friendly}`)
     } finally {
+      if (speakerRelease) await speakerRelease().catch(() => {})
       setIsLoading(false)
+      setLiveStartedAt(null)
     }
   }
 
@@ -504,6 +677,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
           visible={showTTSParamsModal}
           onClose={() => setShowTTSParamsModal(false)}
           onSave={handleSaveTTSParams}
+          caps={ttsCaps}
         />
 
         <MaskedProgress
@@ -542,6 +716,9 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
             {inputText.length}
             /500
           </Text>
+          {englishOnlyModel && (
+            <Text style={styles.languageHint}>{t.params.voiceEnglishOnly}</Text>
+          )}
         </View>
 
         <View style={styles.controlSection}>
@@ -561,6 +738,26 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
           </TouchableOpacity>
         </View>
 
+        {liveStartedAt != null && (
+          <View style={styles.audioSection}>
+            <View style={styles.audioCard}>
+              <Text style={styles.infoTitle}>生成中…</Text>
+              <View style={styles.statsRow}>
+                <View style={styles.statCell}>
+                  <Text style={styles.statValue}>
+                    {`${((Date.now() - liveStartedAt) / 1000).toFixed(1)}s`}
+                  </Text>
+                  <Text style={styles.statLabel}>elapsed</Text>
+                </View>
+                <View style={styles.statCell}>
+                  <Text style={styles.statValue}>{liveTokens}</Text>
+                  <Text style={styles.statLabel}>tokens</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
+
         {generatedAudio && (
           <View style={styles.audioSection}>
             <Text style={styles.sectionTitle}>{t.examples.generatedAudio}</Text>
@@ -569,6 +766,33 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
 
               {audioData && audioData.length > 0 ? (
                 <>
+                  <Waveform audio={audioData} color={theme.colors.primary} />
+                  {genStats && (
+                    <View style={styles.statsRow}>
+                      <View style={styles.statCell}>
+                        <Text style={styles.statValue}>{`${genStats.genSec.toFixed(2)}s`}</Text>
+                        <Text style={styles.statLabel}>generation</Text>
+                      </View>
+                      {genStats.audioSec != null && (
+                        <>
+                          <View style={styles.statCell}>
+                            <Text style={styles.statValue}>{`${genStats.audioSec.toFixed(2)}s`}</Text>
+                            <Text style={styles.statLabel}>audio</Text>
+                          </View>
+                          <View style={styles.statCell}>
+                            <Text style={styles.statValue}>
+                              {`${(genStats.genSec / genStats.audioSec).toFixed(2)}×`}
+                            </Text>
+                            <Text style={styles.statLabel}>RTF</Text>
+                          </View>
+                        </>
+                      )}
+                      <View style={styles.statCell}>
+                        <Text style={styles.statValue}>{genStats.tokens}</Text>
+                        <Text style={styles.statLabel}>{genStats.label}</Text>
+                      </View>
+                    </View>
+                  )}
                   <AudioPlayer audio={audioData} sr={sampleRate} />
                   <TouchableOpacity
                     style={[
@@ -625,6 +849,7 @@ export default function TTSScreen({ navigation }: { navigation: any }) {
         visible={showTTSParamsModal}
         onClose={() => setShowTTSParamsModal(false)}
         onSave={handleSaveTTSParams}
+        caps={ttsCaps}
       />
     </View>
   )
@@ -786,6 +1011,16 @@ function createStyles(
       lineHeight: 17,
       color: theme.colors.textSecondary,
     },
+    languageHint: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 17,
+      color: theme.colors.error,
+    },
+    statsRow: { flexDirection: 'row', gap: 18, marginTop: 8 },
+    statCell: { alignItems: 'center' },
+    statValue: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
+    statLabel: { fontSize: 11, color: theme.colors.textSecondary },
     audioSection: {
       marginBottom: 24,
     },
