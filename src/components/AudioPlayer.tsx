@@ -100,22 +100,43 @@ export const AudioPlayer = ({
   useEffect(() => {
     if (isPlaying) {
       setProgress(0)
-      const interval = setInterval(() => {
-        setProgress(ctxRef.current?.currentTime ?? 0)
-      }, 10)
-      ctxRef.current ??= new AudioContext({ sampleRate: sr })
-      const audioBuffer = ctxRef.current.createBuffer(1, audio.length, sr)
+      const ctx = ctxRef.current ?? new AudioContext({ sampleRate: sr })
+      ctxRef.current = ctx
+      // The context clock runs from its creation, not from playback: keep the
+      // offset so the position is the time since `start()`.
+      const startedAt = ctx.currentTime
+
+      const audioBuffer = ctx.createBuffer(1, audio.length, sr)
       audioBuffer.copyToChannel(audio, 0)
-      const source = ctxRef.current.createBufferSource()
+      const source = ctx.createBufferSource()
       source.buffer = audioBuffer
-      source.connect(ctxRef.current.destination)
-      source.start()
-      source.onEnded = () => {
+      source.connect(ctx.destination)
+
+      let finished = false
+      const stop = () => {
+        if (finished) return
+        finished = true
         clearInterval(interval)
         setIsPlaying(false)
         setProgress(duration)
       }
-      return () => clearInterval(interval)
+
+      // `onEnded` is not reliable on every platform build, so the interval
+      // also stops at the clip's duration; without it the elapsed time kept
+      // running after the audio had finished.
+      const interval = setInterval(() => {
+        const elapsed = (ctxRef.current?.currentTime ?? 0) - startedAt
+        if (elapsed >= duration) stop()
+        else setProgress(Math.max(0, elapsed))
+      }, 100)
+
+      source.start()
+      source.onEnded = stop
+
+      return () => {
+        finished = true
+        clearInterval(interval)
+      }
     } else {
       ctxRef.current?.close()
       ctxRef.current = null
