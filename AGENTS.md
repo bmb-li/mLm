@@ -131,9 +131,14 @@ rsync -a --delete ../llama.rn/scripts/ modules/llama.rn/scripts/
 cp ../llama.rn/android/build.gradle        modules/llama.rn/android/build.gradle
 cp ../llama.rn/package.json                modules/llama.rn/package.json
 rsync -a --delete ../llama.rn/android/src/main/java/ modules/llama.rn/android/src/main/java/
+rsync -a --delete ../llama.rn/android/src/main/cmake/ modules/llama.rn/android/src/main/cmake/
+rsync -a --delete ../llama.rn/android/src/main/rnllama/ modules/llama.rn/android/src/main/rnllama/
 cp ../llama.rn/android/src/main/CMakeLists.txt    modules/llama.rn/android/src/main/
 cp ../llama.rn/android/src/main/RNLlamaJSI.cpp    modules/llama.rn/android/src/main/
 ```
+
+`android/src/main/cmake/` 里的 `rnllama-build-options.cmake` 会被主 CMakeLists include（rc.12 起它又 include 了 `cmake/rnllama-compiler-cache.cmake`），漏同步会直接 configure 失败。
+`cpp/` 同步时建议加 `--exclude 'ggml-hexagon'`，那是本地 skel 构建留下的产物目录。
 
 **⚠️ 升级后必须同步"后端版本号"显示**：设置页显示的是 `mLm <app版本> (llama.rn v<后端版本> b<build>)`。
 - 后端版本统一在 **`src/utils/backendVersion.ts`** 的 `LLAMA_RN_VERSION` 常量里维护
@@ -282,6 +287,7 @@ if (callbacks.onComplete) {
 | rc.9 | `start()` 新增 `vtcm_size`（`n_hmx` 之后、`max_vmem` 之前）| **是** |
 | rc.10 | 无 | 否（可复用 rc.9 的 skel）|
 | rc.11 | 无（llama.cpp b12292）| 否（可复用 rc.9 的 skel）|
+| rc.12 | 无（llama.cpp b12445；新增 video_url 原生支持）| 否（可复用 rc.9 的 skel）|
 
 **⚠️ 升级 llama.rn 后必须重新编译 skel**：skel 固件与主机后端 IDL 强耦合，每次 llama.cpp sync 都可能改 IDL。若 HTP 卡 80%，先 `git diff <旧tag> <新tag> -- vendor/llama.cpp/ggml/src/ggml-hexagon/htp/htp_iface.idl`，有变更就必须重建 skel。
 
